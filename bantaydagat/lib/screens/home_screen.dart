@@ -1,5 +1,8 @@
 import 'package:flutter/material.dart';
-import 'dashboard_tab.dart';
+import 'dashboard_screen.dart';
+import 'trends_tab.dart'; 
+import 'alerts_tab.dart'; 
+import 'profile_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({Key? key}) : super(key: key);
@@ -11,10 +14,11 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   int _currentIndex = 0;
 
+  // Replace the "Coming Soon" widgets with the actual tabs
   final List<Widget> _tabs = [
     const DashboardTab(),
-    const Center(child: Text('Historical Trends (Coming Soon)')),
-    const Center(child: Text('Alert Logs (Coming Soon)')),
+    const TrendsTab(),
+    const AlertsTab(),
   ];
 
   @override
@@ -34,14 +38,24 @@ class _HomeScreenState extends State<HomeScreen> {
         actions: [
           Padding(
             padding: const EdgeInsets.only(right: 16.0),
-            child: CircleAvatar(
-              backgroundColor: const Color(0xFF0F82A0),
-              radius: 16,
-              child: const Text('S', style: TextStyle(color: Colors.white, fontSize: 14)),
+            child: InkWell(
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const ProfileScreen()),
+                );
+              },
+              customBorder: const CircleBorder(),
+              child: const CircleAvatar(
+                backgroundColor: Color(0xFF0F82A0),
+                radius: 16,
+                child: Text('R', style: TextStyle(color: Colors.white, fontSize: 14)), 
+              ),
             ),
           )
         ],
-      ),
+      ), // <-- FIX: ADDED CLOSING PARENTHESIS AND COMMA HERE
+        
       body: _tabs[_currentIndex],
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _currentIndex,

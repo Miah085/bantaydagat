@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "417512950497",
+    "project_id": "bantaydagat-4b8b6",
+    "storage_bucket": "bantaydagat-4b8b6.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:417512950497:android:4012d55506824ba74b45a0",
+        "android_client_info": {
+          "package_name": "com.example.bantaydagat"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDq2bF0WCXhSpFgRxyF7JIcYGwApigRoMU"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

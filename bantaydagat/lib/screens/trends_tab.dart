@@ -1,125 +1,137 @@
 import 'package:flutter/material.dart';
-import 'package:fl_chart/fl_chart.dart';
+import 'package:firebase_database/firebase_database.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:intl/intl.dart';
 
-class TrendsTab extends StatelessWidget {
-  const TrendsTab({Key? key}) : super(key: key);
+class HistoricalTrendsTab extends StatelessWidget {
+  const HistoricalTrendsTab({Key? key}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'Historical Water Quality Trends',
-            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF2C3E50)),
-          ),
-          const SizedBox(height: 16),
-          _buildChartCard('Temperature (°C)', const Color(0xFF1E88E5), _mockTempData()),
-          const SizedBox(height: 16),
-          _buildChartCard('pH Level', const Color(0xFFFDD835), _mockPhData()),
-          const SizedBox(height: 16),
-          _buildChartCard('Turbidity (NTU)', const Color(0xFFE53935), _mockTurbidityData()),
-        ],
-      ),
-    );
-  }
+    final String databaseUrl = "https://bantaydagat-default-rtdb.firebaseio.com/"; //
+    
+    final DatabaseReference historyRef = FirebaseDatabase.instanceFor(
+      app: Firebase.app(), 
+      databaseURL: databaseUrl
+    ).ref('history_logs'); //
 
-  Widget _buildChartCard(String title, Color lineColor, List<FlSpot> spots) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.shade200),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withOpacity(0.02),
-            blurRadius: 8,
-            offset: const Offset(0, 4),
-          )
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(
-            title,
-            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w600, color: Color(0xFF546E7A)),
-          ),
-          const SizedBox(height: 24),
-          SizedBox(
-            height: 150,
-            child: LineChart(
-              LineChartData(
-                gridData: FlGridData(
-                  show: true,
-                  drawVerticalLine: false,
-                  horizontalInterval: 10,
-                  getDrawingHorizontalLine: (value) {
-                    return FlLine(color: Colors.grey.shade200, strokeWidth: 1);
-                  },
-                ),
-                titlesData: FlTitlesData(
-                  show: true,
-                  rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                  topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-                  bottomTitles: AxisTitles(
-                    sideTitles: SideTitles(
-                      showTitles: true,
-                      reservedSize: 22,
-                      interval: 4,
-                      getTitlesWidget: (value, meta) {
-                        return Text('${value.toInt()}:00', style: TextStyle(color: Colors.grey.shade500, fontSize: 10));
-                      },
-                    ),
-                  ),
-                  leftTitles: AxisTitles(
-                    sideTitles: SideTitles(
-                      showTitles: true,
-                      interval: 10,
-                      reservedSize: 28,
-                      getTitlesWidget: (value, meta) {
-                        return Text(value.toInt().toString(), style: TextStyle(color: Colors.grey.shade500, fontSize: 10));
-                      },
-                    ),
-                  ),
-                ),
-                borderData: FlBorderData(show: false),
-                lineBarsData: [
-                  LineChartBarData(
-                    spots: spots,
-                    isCurved: true,
-                    color: lineColor,
-                    barWidth: 2.5,
-                    isStrokeCapRound: true,
-                    dotData: const FlDotData(show: false),
-                    belowBarData: BarAreaData(
-                      show: true,
-                      color: lineColor.withOpacity(0.1),
-                    ),
-                  ),
-                ],
+    return StreamBuilder(
+      stream: historyRef.limitToLast(50).onValue, // Pulling last 50 data blocks for deep trend analysis //
+      builder: (context, AsyncSnapshot<DatabaseEvent> snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Center(
+            child: CircularProgressIndicator(color: Color(0xFF0F82A0)), //
+          );
+        }
+
+        if (!snapshot.hasData || snapshot.data!.snapshot.value == null) {
+          return const Center(
+            child: Text("No historical records found in production database."), //
+          );
+        }
+
+        final Map<dynamic, dynamic> rawLogs = snapshot.data!.snapshot.value as Map; //
+        final sortedKeys = rawLogs.keys.toList()..sort((a, b) => b.compareTo(a)); // Newest records at top //
+
+        return ListView.builder(
+          padding: const EdgeInsets.all(16.0),
+          itemCount: sortedKeys.length,
+          itemBuilder: (context, index) {
+            final log = Map<String, dynamic>.from(rawLogs[sortedKeys[index]] as Map); //
+            
+            // Format time parameters cleanly
+            int ts = log['timestamp'] ?? 0; //
+            DateTime date = DateTime.fromMillisecondsSinceEpoch(ts).toLocal(); //
+            String formattedDate = DateFormat('MMM dd, yyyy').format(date);
+            String formattedTime = DateFormat('hh:mm:ss a').format(date); //
+
+            // Synchronized values coming from hardware nodes
+            double airTemp = (log['air_temp'] ?? log['temp'] ?? 0.0).toDouble();
+            double waterTemp = (log['water_temp'] ?? 0.0).toDouble();
+            double humidity = (log['humidity'] ?? log['hum'] ?? 0.0).toDouble();
+            double ph = (log['ph'] ?? 7.0).toDouble();
+            double turbidity = (log['turbidity'] ?? 0.0).toDouble();
+
+            // Match safety colors directly with your web layout specifications
+            bool isPhSafe = ph >= 6.5 && ph <= 8.5; //
+            bool isTurbiditySafe = turbidity < 5.0; //
+
+            return Card(
+              margin: const EdgeInsets.only(bottom: 16.0),
+              elevation: 0,
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+                side: BorderSide(color: Colors.grey.shade200), //
               ),
-            ),
-          ),
-        ],
-      ),
+              child: Padding(
+                padding: const EdgeInsets.all(16.0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // Header row containing logging metadata timeline
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Row(
+                          children: [
+                            const Icon(Icons.calendar_today_outlined, size: 14, color: Color(0xFF0F82A0)),
+                            const SizedBox(width: 6),
+                            Text(
+                              formattedDate,
+                              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: Color(0xFF2C3E50)),
+                            ),
+                          ],
+                        ),
+                        Text(
+                          formattedTime,
+                          style: TextStyle(fontSize: 12, color: Colors.grey.shade500, fontWeight: FontWeight.w500),
+                        ),
+                      ],
+                    ),
+                    const Divider(height: 20, thickness: 1),
+                    
+                    // Comprehensive parameter readout block
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceAround,
+                      children: [
+                        _buildTrendMetric("Air", "${airTemp.toStringAsFixed(1)}°C", Colors.blueGrey),
+                        _buildTrendMetric("Water", "${waterTemp.toStringAsFixed(1)}°C", Colors.orange),
+                        _buildTrendMetric("Hum", "${humidity.toStringAsFixed(0)}%", Colors.teal),
+                        _buildTrendMetric(
+                          "pH", 
+                          ph.toStringAsFixed(1), 
+                          isPhSafe ? const Color(0xFF2E7D32) : const Color(0xFFC62828)
+                        ),
+                        _buildTrendMetric(
+                          "NTU", 
+                          turbidity.toStringAsFixed(1), 
+                          isTurbiditySafe ? const Color(0xFF2E7D32) : const Color(0xFFC62828)
+                        ),
+                      ],
+                    )
+                  ],
+                ),
+              ),
+            );
+          },
+        );
+      },
     );
   }
 
-  // Mock data functions (X = hour, Y = value)
-  List<FlSpot> _mockTempData() => const [
-    FlSpot(0, 26), FlSpot(4, 27.5), FlSpot(8, 28), FlSpot(12, 29.5),
-    FlSpot(16, 28), FlSpot(20, 26.5), FlSpot(24, 25),
-  ];
-  List<FlSpot> _mockPhData() => const [
-    FlSpot(0, 7.0), FlSpot(4, 7.1), FlSpot(8, 7.3), FlSpot(12, 7.5),
-    FlSpot(16, 7.4), FlSpot(20, 7.2), FlSpot(24, 7.1),
-  ];
-  List<FlSpot> _mockTurbidityData() => const [
-    FlSpot(0, 2.1), FlSpot(4, 5.5), FlSpot(8, 8.2), FlSpot(12, 6.0),
-    FlSpot(16, 3.5), FlSpot(20, 2.5), FlSpot(24, 2.0),
-  ];
+  Widget _buildTrendMetric(String label, String value, Color valueColor) {
+    return Column(
+      children: [
+        Text(
+          label,
+          style: TextStyle(fontSize: 11, color: Colors.blueGrey.shade400, fontWeight: FontWeight.bold),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          value,
+          style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: valueColor),
+        ),
+      ],
+    );
+  }
 }

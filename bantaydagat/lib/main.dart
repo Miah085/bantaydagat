@@ -6,34 +6,24 @@ import 'screens/home_screen.dart';
 
 // Change main() to be async
 void main() async {
-  // Ensure the app waits for Firebase to connect before starting
   WidgetsFlutterBinding.ensureInitialized();
-  
-  // This is the magic line that uses your keys to log in to the cloud
-  await Firebase.initializeApp(
-    options: DefaultFirebaseOptions.currentPlatform,
-  );
-
-  runApp(const BantayDagatApp());
+  await Firebase.initializeApp();
+  runApp(const MyApp());
 }
 
-class BantayDagatApp extends StatelessWidget {
-  const BantayDagatApp({Key? key}) : super(key: key);
+class MyApp extends StatelessWidget {
+  const MyApp({Key? key}) : super(key: key);
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'BantayDagat',
       debugShowCheckedModeBanner: false,
+      title: 'BantayDagat',
       theme: ThemeData(
-        scaffoldBackgroundColor: const Color(0xFFF4F7F6),
-        primaryColor: const Color(0xFF0F82A0),
-        textTheme: GoogleFonts.interTextTheme(Theme.of(context).textTheme),
-        colorScheme: ColorScheme.fromSwatch().copyWith(
-          secondary: const Color(0xFF0F82A0),
-        ),
+        scaffoldBackgroundColor: const Color(0xFFF8FAFC),
+        fontFamily: 'Roboto', // Or your system generic font family selection
       ),
-      home: const HomeScreen(),
+      home: const HomeScreen(), // Pushes straight to the wrapper containing your logo toolbar
     );
   }
 }

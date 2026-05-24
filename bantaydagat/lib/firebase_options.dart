@@ -37,20 +37,20 @@ class DefaultFirebaseOptions {
 
   // --- ANDROID CONFIGURATION ---
   static const FirebaseOptions android = FirebaseOptions(
-    apiKey: "AIzaSyDq2bF0WCXhSpFgRxyF7JIcYGwApigRoMU",
-    appId: '1:417512950497:android:4012d55506824ba74b45a0',
+    apiKey: "AIzaSyCiBcmASfU0Ye6Aav1wJWeuF8yIzrRG2GA",
+    appId: '1:767180658587:android:8d3607af77f64497d1333e',
     messagingSenderId: '417512950497',
-    projectId: 'bantaydagat-4b8b6',
-    storageBucket: "bantaydagat-4b8b6.firebasestorage.app"
+    projectId: 'bantaydagat',
+    storageBucket: "bantaydagat.firebasestorage.app"
   );
 
   // --- IOS CONFIGURATION ---
   static const FirebaseOptions ios = FirebaseOptions(
-    apiKey: 'AIzaSyBCsPGsMYp3c8LahQxDwbJ0fNsPIrKGXsw',
-    appId: '1:417512950497:ios:2b9395e6eb2c74cc4b45a0',
-    messagingSenderId: '417512950497',
-    projectId: 'bantaydagat-4b8b6',
-    storageBucket: "bantaydagat-4b8b6.firebasestorage.app",
+    apiKey: 'AIzaSyAU1Q9qrdzgG2t_eHffMpc7kDrQsPn1Lx8',
+    appId: '1:767180658587:ios:a000f71b28e1c1dad1333e',
+    messagingSenderId: '767180658587',
+    projectId: 'bantaydagat',
+    storageBucket: "bantaydagat.firebasestorage.app",
     iosBundleId: 'com.example.bantaydagat', 
   );
 }

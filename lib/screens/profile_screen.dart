@@ -1,4 +1,7 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'login_screen.dart'; 
 
 class ProfileScreen extends StatefulWidget {
   const ProfileScreen({Key? key}) : super(key: key);
@@ -8,9 +11,43 @@ class ProfileScreen extends StatefulWidget {
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
-  // Mock settings state
+  // Variables to hold the settings
   bool _pushNotifications = true;
   bool _soundAlerts = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSettings(); // Load the saved preferences when the screen boots
+  }
+
+  // --- LOCAL STORAGE LOGIC ---
+  Future<void> _loadSettings() async {
+    final prefs = await SharedPreferences.getInstance();
+    setState(() {
+      // If a setting doesn't exist yet, it defaults to 'true'
+      _pushNotifications = prefs.getBool('push_notifications') ?? true;
+      _soundAlerts = prefs.getBool('sound_alerts') ?? true;
+    });
+  }
+
+  Future<void> _saveSetting(String key, bool value) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(key, value);
+  }
+
+  // --- LOGOUT LOGIC ---
+  Future<void> _handleLogout() async {
+    await FirebaseAuth.instance.signOut();
+    
+    if (mounted) {
+      Navigator.pushAndRemoveUntil(
+        context,
+        MaterialPageRoute(builder: (context) => const LoginScreen()),
+        (route) => false, // This destroys the back-history so they can't swipe back into the app
+      );
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -19,10 +56,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 0.5,
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Color(0xFF1A1A1A)),
-          onPressed: () => Navigator.pop(context),
-        ),
+        automaticallyImplyLeading: false, // FIXED: Completely removes the useless back button
         title: const Text(
           'Ranger Profile',
           style: TextStyle(color: Color(0xFF1A1A1A), fontWeight: FontWeight.bold, fontSize: 18),
@@ -99,32 +133,30 @@ class _ProfileScreenState extends State<ProfileScreen> {
       child: Column(
         children: [
           SwitchListTile(
-            // Explicit colors to prevent disappearing
             activeTrackColor: const Color(0xFF0F82A0),
             activeColor: Colors.white,
             inactiveTrackColor: Colors.grey.shade300,
             inactiveThumbColor: Colors.white,
-            
             title: const Text('Danger Alerts (Push)', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
             subtitle: Text('Receive notifications for critical water levels', style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
             value: _pushNotifications,
             onChanged: (bool value) {
               setState(() => _pushNotifications = value);
+              _saveSetting('push_notifications', value); // FIXED: Saves to phone memory
             },
           ),
           Divider(height: 1, color: Colors.grey.shade200),
           SwitchListTile(
-            // Explicit colors to prevent disappearing
             activeTrackColor: const Color(0xFF0F82A0),
             activeColor: Colors.white,
             inactiveTrackColor: Colors.grey.shade300,
             inactiveThumbColor: Colors.white,
-            
             title: const Text('Sound Alerts', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
             subtitle: Text('Play alarm sound on critical danger', style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
             value: _soundAlerts,
             onChanged: (bool value) {
               setState(() => _soundAlerts = value);
+              _saveSetting('sound_alerts', value); // FIXED: Saves to phone memory
             },
           ),
         ],
@@ -161,9 +193,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     return SizedBox(
       width: double.infinity,
       child: OutlinedButton.icon(
-        onPressed: () {
-          // TODO: Implement Firebase Auth signOut
-        },
+        onPressed: _handleLogout, // FIXED: Triggers the new Firebase logout method
         icon: const Icon(Icons.logout, color: Color(0xFFC62828)),
         label: const Text('Log Out', style: TextStyle(color: Color(0xFFC62828), fontWeight: FontWeight.bold, fontSize: 16)),
         style: OutlinedButton.styleFrom(

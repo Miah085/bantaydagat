@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'package:intl/intl.dart'; // Added for timestamp formatting
+import 'package:intl/intl.dart'; 
 
 class DashboardTab extends StatelessWidget {
   const DashboardTab({Key? key}) : super(key: key);
@@ -10,18 +10,19 @@ class DashboardTab extends StatelessWidget {
   Widget build(BuildContext context) {
     final String databaseUrl = "https://bantaydagat-default-rtdb.firebaseio.com/";
     
-    final DatabaseReference liveRef = FirebaseDatabase.instanceFor(
+    // FIXED: Added the 'bantaydagat/' root folder to the path
+    final Query liveQuery = FirebaseDatabase.instanceFor(
       app: Firebase.app(), 
       databaseURL: databaseUrl
-    ).ref('live_readings');
+    ).ref('bantaydagat/readings').limitToLast(1); 
     
-    final DatabaseReference historyRef = FirebaseDatabase.instanceFor(
+    final Query historyQuery = FirebaseDatabase.instanceFor(
       app: Firebase.app(), 
       databaseURL: databaseUrl
-    ).ref('history_logs');
+    ).ref('bantaydagat/readings').limitToLast(15);
 
     return StreamBuilder(
-      stream: liveRef.onValue,
+      stream: liveQuery.onValue,
       builder: (context, AsyncSnapshot<DatabaseEvent> snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Center(
@@ -32,24 +33,33 @@ class DashboardTab extends StatelessWidget {
           );
         }
 
-        // 1. Setup default fallback parameters matching your updated fields
         double airTemp = 0.0;
         double waterTemp = 0.0;
         double humidity = 0.0;
         double ph = 7.0;
         double turbidity = 0.0;
 
+        // --- DIAGNOSTIC CHECK ---
         if (snapshot.hasData && snapshot.data!.snapshot.value != null) {
-          final rawData = snapshot.data!.snapshot.value;
-          debugPrint("Hardware Data Received: $rawData");
-          final data = Map<String, dynamic>.from(rawData as Map);
+          debugPrint("🔥 RAW FIREBASE DATA: ${snapshot.data!.snapshot.value}");
           
-          // Updated matching keys from your live production database
-          airTemp = (data['air_temp'] ?? 0.0).toDouble();
-          waterTemp = (data['water_temp'] ?? 0.0).toDouble();
-          humidity = (data['humidity'] ?? 0.0).toDouble();
-          ph = (data['ph'] ?? 7.0).toDouble();
-          turbidity = (data['turbidity'] ?? 0.0).toDouble();
+          try {
+            final Map rawWrapper = snapshot.data!.snapshot.value as Map;
+            final Map latestEntry = rawWrapper.values.first as Map; 
+            final data = Map<String, dynamic>.from(latestEntry);
+            
+            airTemp = (data['airTemp'] ?? 0.0).toDouble();
+            waterTemp = (data['waterTemp'] ?? 0.0).toDouble();
+            humidity = (data['humidity'] ?? 0.0).toDouble();
+            ph = (data['pH'] ?? 7.0).toDouble();
+            turbidity = (data['turbidity'] ?? 0.0).toDouble();
+            
+            debugPrint("✅ DATA PARSED SUCCESSFULLY!");
+          } catch (e) {
+            debugPrint("❌ ERROR PARSING DATA: $e");
+          }
+        } else {
+          debugPrint("⚠️ NO DATA FOUND AT THIS PATH (Firebase returned null)");
         }
 
         // --- BANTAYDAGAT ECO-THRESHOLD LOGIC ---
@@ -58,7 +68,6 @@ class DashboardTab extends StatelessWidget {
         bool isPhSafe = ph >= 6.5 && ph <= 8.5;
         bool isTurbiditySafe = turbidity < 5.0;
 
-        // Calculate Caution and Danger tallies to render the top dashboard blocks dynamically
         int cautionCount = (!isWaterSafe || (airTemp > 30.0 && airTemp <= 32.0)) ? 1 : 0;
         int dangerCount = (!isPhSafe ? 1 : 0) + (!isTurbiditySafe ? 1 : 0);
         bool isGoRecommendation = cautionCount == 0 && dangerCount == 0;
@@ -68,7 +77,6 @@ class DashboardTab extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              // NEW ADDITION: Web-matched Warning Summary Metrics
               Row(
                 children: [
                   Expanded(
@@ -92,7 +100,6 @@ class DashboardTab extends StatelessWidget {
               ),
               const SizedBox(height: 20),
 
-              // Existing Release Alert card styled to match the new web warnings
               _buildGoNoGoCard(isGoRecommendation),
               const SizedBox(height: 24),
               
@@ -159,9 +166,8 @@ class DashboardTab extends StatelessWidget {
               _buildSectionHeader('History Logs', isLive: false),
               const SizedBox(height: 16),
 
-              // --- SECTION 2: HISTORY LOGS LIST (With Time Conversion) ---
               StreamBuilder(
-                stream: historyRef.limitToLast(15).onValue, 
+                stream: historyQuery.onValue, 
                 builder: (context, AsyncSnapshot<DatabaseEvent> snapshot) {
                   if (snapshot.hasData && snapshot.data!.snapshot.value != null) {
                     final Map<dynamic, dynamic> logs = snapshot.data!.snapshot.value as Map;
@@ -174,7 +180,6 @@ class DashboardTab extends StatelessWidget {
                       itemBuilder: (context, index) {
                         final log = Map<String, dynamic>.from(logs[sortedKeys[index]] as Map);
                         
-                        // TIMESTAMP CONVERSION LOGIC
                         int ts = log['timestamp'] ?? 0;
                         DateTime date = DateTime.fromMillisecondsSinceEpoch(ts).toLocal();
                         String formattedTime = DateFormat('hh:mm:ss a').format(date);
@@ -196,7 +201,7 @@ class DashboardTab extends StatelessWidget {
                               child: const Icon(Icons.history, color: Color(0xFF0F82A0), size: 20),
                             ),
                             title: Text(
-                              "T: ${log['temp'] ?? '--'}°C | H: ${log['hum'] ?? '--'}%",
+                              "Air: ${log['airTemp'] ?? '--'}°C | Hum: ${log['humidity'] ?? '--'}%",
                               style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
                             ),
                             subtitle: Text("Recorded at $formattedTime", style: const TextStyle(fontSize: 12)),
@@ -216,9 +221,6 @@ class DashboardTab extends StatelessWidget {
     );
   }
 
-  // --- HELPER WIDGETS ---
-  
-  // New helper for summary counters at the top
   Widget _buildSummaryCard({required String title, required String count, required String label, required Color color}) {
     return Container(
       padding: const EdgeInsets.all(16),

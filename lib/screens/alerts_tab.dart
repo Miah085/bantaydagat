@@ -8,19 +8,20 @@ class AlertsTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final String databaseUrl = "https://bantaydagat-4b8b6-default-rtdb.firebaseio.com/"; //
+    final String databaseUrl = "https://bantaydagat-default-rtdb.firebaseio.com/"; 
     
-    final DatabaseReference historyRef = FirebaseDatabase.instanceFor(
+    // FIXED: Point to the new nested readings folder
+    final Query historyQuery = FirebaseDatabase.instanceFor(
       app: Firebase.app(), 
       databaseURL: databaseUrl
-    ).ref('history_logs'); //
+    ).ref('bantaydagat/readings').limitToLast(30); 
 
     return StreamBuilder(
-      stream: historyRef.limitToLast(30).onValue, //
+      stream: historyQuery.onValue, 
       builder: (context, AsyncSnapshot<DatabaseEvent> snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Center(
-            child: CircularProgressIndicator(color: Color(0xFF0F82A0)), //
+            child: CircularProgressIndicator(color: Color(0xFF0F82A0)), 
           );
         }
 
@@ -29,19 +30,19 @@ class AlertsTab extends StatelessWidget {
         int totalDangerCount = 0;
 
         if (snapshot.hasData && snapshot.data!.snapshot.value != null) {
-          final Map<dynamic, dynamic> logs = snapshot.data!.snapshot.value as Map; //
-          final sortedKeys = logs.keys.toList()..sort((a, b) => b.compareTo(a)); //
+          final Map<dynamic, dynamic> logs = snapshot.data!.snapshot.value as Map; 
+          final sortedKeys = logs.keys.toList()..sort((a, b) => b.compareTo(a)); 
 
           for (var key in sortedKeys) {
-            final log = Map<String, dynamic>.from(logs[key] as Map); //
+            final log = Map<String, dynamic>.from(logs[key] as Map); 
             
-            int ts = log['timestamp'] ?? 0; //
-            DateTime date = DateTime.fromMillisecondsSinceEpoch(ts).toLocal(); //
+            int ts = log['timestamp'] ?? 0; 
+            DateTime date = DateTime.fromMillisecondsSinceEpoch(ts).toLocal(); 
             String timeStr = DateFormat('MMM dd, hh:mm a').format(date);
 
-            double airTemp = (log['air_temp'] ?? 0.0).toDouble();
-            double waterTemp = (log['water_temp'] ?? 0.0).toDouble();
-            double ph = (log['ph'] ?? 7.0).toDouble();
+            // FIXED: Using exact database spelling
+            double waterTemp = (log['waterTemp'] ?? 0.0).toDouble();
+            double ph = (log['pH'] ?? 7.0).toDouble();
             double turbidity = (log['turbidity'] ?? 0.0).toDouble();
 
             // Evaluate thresholds matching your web system rules
@@ -83,7 +84,6 @@ class AlertsTab extends StatelessWidget {
 
         return Column(
           children: [
-            // 1. TOP TOTALS SUMMARY CARDS (Matches Web Header Layout)
             Padding(
               padding: const EdgeInsets.all(16.0),
               child: Row(
@@ -106,8 +106,6 @@ class AlertsTab extends StatelessWidget {
                 ],
               ),
             ),
-
-            // 2. SCROLLABLE ALERT LIST LOG
             Expanded(
               child: incidentAlerts.isEmpty
                   ? const Center(child: Text("No exceptional water parameter alerts logged."))
@@ -119,37 +117,22 @@ class AlertsTab extends StatelessWidget {
                         return Card(
                           margin: const EdgeInsets.only(bottom: 12.0),
                           elevation: 0,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8),
-                            side: BorderSide(color: Colors.grey.shade200), //
-                          ),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8), side: BorderSide(color: Colors.grey.shade200)),
                           child: ListTile(
                             contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                             leading: Container(
                               padding: const EdgeInsets.all(8),
-                              decoration: BoxDecoration(
-                                color: alert['color'].withOpacity(0.1),
-                                shape: BoxShape.circle,
-                              ),
+                              decoration: BoxDecoration(color: alert['color'].withOpacity(0.1), shape: BoxShape.circle),
                               child: Icon(alert['icon'], color: alert['color'], size: 22),
                             ),
                             title: Row(
                               mainAxisAlignment: MainAxisAlignment.spaceBetween,
                               children: [
-                                Text(
-                                  alert['param'],
-                                  style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
-                                ),
+                                Text(alert['param'], style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
                                 Container(
                                   padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                                  decoration: BoxDecoration(
-                                    color: alert['color'].withOpacity(0.1),
-                                    borderRadius: BorderRadius.circular(4),
-                                  ),
-                                  child: Text(
-                                    alert['type'],
-                                    style: TextStyle(color: alert['color'], fontSize: 9, fontWeight: FontWeight.bold),
-                                  ),
+                                  decoration: BoxDecoration(color: alert['color'].withOpacity(0.1), borderRadius: BorderRadius.circular(4)),
+                                  child: Text(alert['type'], style: TextStyle(color: alert['color'], fontSize: 9, fontWeight: FontWeight.bold)),
                                 ),
                               ],
                             ),
@@ -178,11 +161,7 @@ class AlertsTab extends StatelessWidget {
   Widget _buildSummaryCounter({required String title, required String count, required Color color}) {
     return Container(
       padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: Colors.grey.shade200),
-      ),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.grey.shade200)),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

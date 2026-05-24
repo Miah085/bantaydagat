@@ -7,23 +7,23 @@ class EnvironmentalDataTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final String databaseUrl = "https://bantaydagat-default-rtdb.firebaseio.com/"; //
+    final String databaseUrl = "https://bantaydagat-default-rtdb.firebaseio.com/"; 
     
-    final DatabaseReference liveRef = FirebaseDatabase.instanceFor(
+    // FIXED: Point to the new nested readings folder and grab the latest 1
+    final Query liveQuery = FirebaseDatabase.instanceFor(
       app: Firebase.app(), 
       databaseURL: databaseUrl
-    ).ref('live_readings'); //
+    ).ref('bantaydagat/readings').limitToLast(1); 
 
     return StreamBuilder(
-      stream: liveRef.onValue,
+      stream: liveQuery.onValue,
       builder: (context, AsyncSnapshot<DatabaseEvent> snapshot) {
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Center(
-            child: CircularProgressIndicator(color: Color(0xFF0F82A0)), //
+            child: CircularProgressIndicator(color: Color(0xFF0F82A0)), 
           );
         }
 
-        // Initialize fallback default sensor values
         double airTemp = 0.0;
         double waterTemp = 0.0;
         double humidity = 0.0;
@@ -31,18 +31,19 @@ class EnvironmentalDataTab extends StatelessWidget {
         double turbidity = 0.0;
 
         if (snapshot.hasData && snapshot.data!.snapshot.value != null) {
-          final rawData = snapshot.data!.snapshot.value;
-          final data = Map<String, dynamic>.from(rawData as Map);
+          // FIXED: Peel off the Push ID wrapper (-Osf...) just like the dashboard
+          final Map rawWrapper = snapshot.data!.snapshot.value as Map;
+          final Map latestEntry = rawWrapper.values.first as Map; 
+          final data = Map<String, dynamic>.from(latestEntry);
           
-          // Map real-time keys matching the database schema
-          airTemp = (data['air_temp'] ?? 0.0).toDouble();
-          waterTemp = (data['water_temp'] ?? 0.0).toDouble();
+          // FIXED: Use the exact camelCase spellings from the database
+          airTemp = (data['airTemp'] ?? 0.0).toDouble();
+          waterTemp = (data['waterTemp'] ?? 0.0).toDouble();
           humidity = (data['humidity'] ?? 0.0).toDouble();
-          ph = (data['ph'] ?? 7.0).toDouble();
+          ph = (data['pH'] ?? 7.0).toDouble();
           turbidity = (data['turbidity'] ?? 0.0).toDouble();
         }
 
-        // Safety parameters aligned with web logic thresholds
         bool isAirSafe = airTemp <= 32.0;
         bool isWaterSafe = waterTemp >= 25.0 && waterTemp <= 30.0;
         bool isPhSafe = ph >= 6.5 && ph <= 8.5;
@@ -62,7 +63,6 @@ class EnvironmentalDataTab extends StatelessWidget {
             ),
             const SizedBox(height: 20),
 
-            // Vertical list of robust, detailed parameter layout cards
             _buildEnvironmentalDetailCard(
               title: "Air Temperature",
               value: "${airTemp.toStringAsFixed(1)} °C",
@@ -109,14 +109,9 @@ class EnvironmentalDataTab extends StatelessWidget {
     );
   }
 
-  // Helper builder that layouts clear, modern descriptive material cards
   Widget _buildEnvironmentalDetailCard({
-    required String title,
-    required String value,
-    required String status,
-    required Color statusColor,
-    required IconData icon,
-    required String description,
+    required String title, required String value, required String status,
+    required Color statusColor, required IconData icon, required String description,
   }) {
     return Container(
       margin: const EdgeInsets.only(bottom: 16),
@@ -124,7 +119,7 @@ class EnvironmentalDataTab extends StatelessWidget {
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.shade200), //
+        border: Border.all(color: Colors.grey.shade200), 
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -136,45 +131,25 @@ class EnvironmentalDataTab extends StatelessWidget {
                 children: [
                   Icon(icon, color: const Color(0xFF0F82A0), size: 22),
                   const SizedBox(width: 8),
-                  Text(
-                    title,
-                    style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF2C3E50)),
-                  ),
+                  Text(title, style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Color(0xFF2C3E50))),
                 ],
               ),
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                decoration: BoxDecoration(
-                  color: statusColor.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(6),
-                ),
-                child: Text(
-                  status,
-                  style: TextStyle(color: statusColor, fontSize: 10, fontWeight: FontWeight.bold),
-                ),
+                decoration: BoxDecoration(color: statusColor.withOpacity(0.1), borderRadius: BorderRadius.circular(6)),
+                child: Text(status, style: TextStyle(color: statusColor, fontSize: 10, fontWeight: FontWeight.bold)),
               ),
             ],
           ),
-          const Padding(
-            padding: EdgeInsets.symmetric(vertical: 8.0),
-            child: Divider(thickness: 0.5),
-          ),
+          const Padding(padding: EdgeInsets.symmetric(vertical: 8.0), child: Divider(thickness: 0.5)),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             crossAxisAlignment: CrossAxisAlignment.baseline,
             textBaseline: TextBaseline.alphabetic,
             children: [
-              Expanded(
-                child: Text(
-                  description,
-                  style: const TextStyle(fontSize: 12, color: Colors.blueGrey, height: 1.4),
-                ),
-              ),
+              Expanded(child: Text(description, style: const TextStyle(fontSize: 12, color: Colors.blueGrey, height: 1.4))),
               const SizedBox(width: 16),
-              Text(
-                value,
-                style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: statusColor),
-              ),
+              Text(value, style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: statusColor)),
             ],
           ),
         ],

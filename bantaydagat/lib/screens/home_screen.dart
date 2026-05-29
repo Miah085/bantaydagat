@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
-import 'package:firebase_messaging/firebase_messaging.dart'; // <-- NEW: FCM Import
+import 'package:firebase_messaging/firebase_messaging.dart';
 import 'dashboard_screen.dart';
-import 'trends_tab.dart';
+import 'trends_tab.dart'; // Make sure this matches your actual filename (e.g., historical_trends_tab.dart if you renamed it)
 import 'alerts_tab.dart';
 import 'environmental_data_tab.dart';
 import 'profile_screen.dart';
@@ -18,13 +18,12 @@ class _HomeScreenState extends State<HomeScreen> {
 
   final List<Widget> _tabs = [
     const DashboardTab(),
-    const HistoricalTrendsTab(),
+    const HistoricalTrendsTab(), // Update this class name if yours is named TrendsTab
     const AlertsTab(),
     const EnvironmentalDataTab(),
     const ProfileScreen(),
   ];
 
-  // --- NEW: INITIALIZE NOTIFICATIONS ON LOAD ---
   @override
   void initState() {
     super.initState();
@@ -34,7 +33,6 @@ class _HomeScreenState extends State<HomeScreen> {
   Future<void> _setupPushNotifications() async {
     FirebaseMessaging messaging = FirebaseMessaging.instance;
 
-    // 1. Request permission from the user
     NotificationSettings settings = await messaging.requestPermission(
       alert: true,
       badge: true,
@@ -44,15 +42,16 @@ class _HomeScreenState extends State<HomeScreen> {
     if (settings.authorizationStatus == AuthorizationStatus.authorized) {
       debugPrint('✅ User granted permission for notifications');
       
-      // 2. Fetch the unique device token (Needed to target this specific phone)
       String? token = await messaging.getToken();
       debugPrint("📱 FCM DEVICE TOKEN: $token");
 
-      // 3. Listen for messages while the app is actively open on the screen
+      // CRITICAL FIX: Subscribing to the exact channel the server broadcasts to
+      await messaging.subscribeToTopic('emergency_alerts');
+      debugPrint('✅ Subscribed to emergency_alerts topic');
+
       FirebaseMessaging.onMessage.listen((RemoteMessage message) {
         debugPrint('Got a message whilst in the foreground!');
         if (message.notification != null && mounted) {
-           // Shows a red drop-down banner inside the app
            ScaffoldMessenger.of(context).showSnackBar(
              SnackBar(
                content: Text("🚨 ${message.notification?.title}: ${message.notification?.body}", style: const TextStyle(fontWeight: FontWeight.bold)),
@@ -68,7 +67,6 @@ class _HomeScreenState extends State<HomeScreen> {
       debugPrint('❌ User declined or has not accepted permission');
     }
   }
-  // ---------------------------------------------
 
   @override
   Widget build(BuildContext context) {
@@ -123,31 +121,11 @@ class _HomeScreenState extends State<HomeScreen> {
         selectedLabelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11),
         unselectedLabelStyle: const TextStyle(fontSize: 11),
         items: const [
-          BottomNavigationBarItem(
-            icon: Icon(Icons.dashboard_outlined), 
-            activeIcon: Icon(Icons.dashboard), 
-            label: 'Dashboard',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.analytics_outlined), 
-            activeIcon: Icon(Icons.analytics), 
-            label: 'Trends',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.notifications_outlined), 
-            activeIcon: Icon(Icons.notifications), 
-            label: 'Alerts',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.eco), 
-            activeIcon: Icon(Icons.eco), 
-            label: 'Eco Data',
-          ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.person_outline), 
-            activeIcon: Icon(Icons.person), 
-            label: 'Profile',
-          ),
+          BottomNavigationBarItem(icon: Icon(Icons.dashboard_outlined), activeIcon: Icon(Icons.dashboard), label: 'Dashboard'),
+          BottomNavigationBarItem(icon: Icon(Icons.analytics_outlined), activeIcon: Icon(Icons.analytics), label: 'Trends'),
+          BottomNavigationBarItem(icon: Icon(Icons.notifications_outlined), activeIcon: Icon(Icons.notifications), label: 'Alerts'),
+          BottomNavigationBarItem(icon: Icon(Icons.eco), activeIcon: Icon(Icons.eco), label: 'Eco Data'),
+          BottomNavigationBarItem(icon: Icon(Icons.person_outline), activeIcon: Icon(Icons.person), label: 'Profile'),
         ],
       ),
     );

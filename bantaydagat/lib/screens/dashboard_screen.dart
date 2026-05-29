@@ -23,7 +23,6 @@ class _DashboardTabState extends State<DashboardTab> {
 
   final String databaseUrl = "https://bantaydagat-default-rtdb.firebaseio.com/";
   
-  // Real-time Database Listeners
   StreamSubscription<DatabaseEvent>? _liveSubscription;
   StreamSubscription<DatabaseEvent>? _historySubscription;
 
@@ -35,17 +34,14 @@ class _DashboardTabState extends State<DashboardTab> {
 
   @override
   void dispose() {
-    // Always cancel streams when leaving the screen to save memory
     _liveSubscription?.cancel();
     _historySubscription?.cancel();
     super.dispose();
   }
 
-  // THIS IS THE FIX: Opens a live pipeline to Firebase instead of asking every 5 minutes
   void _setupRealtimeStreams() {
     final db = FirebaseDatabase.instanceFor(app: Firebase.app(), databaseURL: databaseUrl);
 
-    // 1. Listen for the absolute newest reading instantly
     _liveSubscription = db.ref('bantaydagat/readings').limitToLast(1).onValue.listen((event) {
       if (event.snapshot.value != null && mounted) {
         final Map rawWrapper = event.snapshot.value as Map;
@@ -56,7 +52,6 @@ class _DashboardTabState extends State<DashboardTab> {
       }
     });
 
-    // 2. Keep the recent history logs synced
     _historySubscription = db.ref('bantaydagat/readings').limitToLast(15).onValue.listen((event) {
       if (event.snapshot.value != null && mounted) {
         setState(() {
@@ -64,6 +59,124 @@ class _DashboardTabState extends State<DashboardTab> {
         });
       }
     });
+  }
+
+  void _showAssessmentGuide(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) {
+        return DraggableScrollableSheet(
+          initialChildSize: 0.75,
+          maxChildSize: 0.9,
+          minChildSize: 0.5,
+          expand: false,
+          builder: (context, scrollController) {
+            return SingleChildScrollView(
+              controller: scrollController,
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 40, height: 4,
+                      decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  const Text(
+                    "Release Assessment Guide",
+                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    "How the system automatically evaluates release conditions.",
+                    style: TextStyle(fontSize: 13, color: Color(0xFF64748B)),
+                  ),
+                  const SizedBox(height: 24),
+                  
+                  const Text("SYSTEM STATUS COLOR RULES", style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF64748B), letterSpacing: 1)),
+                  const SizedBox(height: 12),
+                  
+                  _buildGuideRuleRow(color: const Color(0xFF10B981), title: "GO: Safe To Release", desc: "All sensors are within the perfect range. Conditions are entirely normal for the sea turtles.", icon: Icons.check_circle),
+                  _buildGuideRuleRow(color: const Color(0xFFEAB308), title: "Go With Caution", desc: "Only 1 parameter is slightly abnormal. It is generally safe, but rangers should perform a brief visual inspection.", icon: Icons.info_outline),
+                  _buildGuideRuleRow(color: const Color(0xFFF97316), title: "NO-GO: Caution Level", desc: "2 or more parameters are abnormal. Release protocols are paused to prevent risk to the turtles.", icon: Icons.warning_amber_rounded),
+                  _buildGuideRuleRow(color: const Color(0xFFEF4444), title: "NO-GO: Critical Danger", desc: "At least 1 parameter has entered a dangerous threshold! Release is strictly stopped. Immediate water check required.", icon: Icons.block),
+                  
+                  const Divider(height: 32),
+                  const Text("IDEAL PARAMETERS CHECKLIST", style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF64748B), letterSpacing: 1)),
+                  const SizedBox(height: 12),
+                  
+                  _buildTargetRow("Air Temperature", "25.0°C to 32.0°C", Icons.air),
+                  _buildTargetRow("Water Temperature", "26.0°C to 31.0°C", Icons.thermostat),
+                  _buildTargetRow("Humidity", "65% to 85%", Icons.water_drop_outlined),
+                  _buildTargetRow("pH Balance", "7.8 to 8.3 (Slightly Alkaline)", Icons.science_outlined),
+                  _buildTargetRow("Turbidity", "Below 25.0 NTU (Clear Water)", Icons.visibility_outlined),
+                  
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.pop(context),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF0F82A0),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      child: const Text("Got it, Close Guide", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  Widget _buildGuideRuleRow({required Color color, required String title, required String desc, required IconData icon}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16.0),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: color, size: 24),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: color)),
+                const SizedBox(height: 2),
+                Text(desc, style: const TextStyle(fontSize: 12, color: Color(0xFF475569), height: 1.4)),
+              ],
+            ),
+          )
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTargetRow(String label, String value, IconData icon) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8.0),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: const Color(0xFF64748B)),
+          const SizedBox(width: 12),
+          Text(label, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: Color(0xFF1E293B))),
+          const Spacer(),
+          Text(value, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF0F82A0))),
+        ],
+      ),
+    );
   }
 
   @override
@@ -184,7 +297,25 @@ class _DashboardTabState extends State<DashboardTab> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text('PRE-RELEASE RECOMMENDATION', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 0.5, color: mainColor)),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text('PRE-RELEASE RECOMMENDATION', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 0.5, color: mainColor)),
+              InkWell(
+                onTap: () => _showAssessmentGuide(context),
+                child: Row(
+                  children: [
+                    Icon(Icons.help_outline, size: 14, color: mainColor),
+                    const SizedBox(width: 4),
+                    Text(
+                      'How this works',
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: mainColor, decoration: TextDecoration.underline),
+                    ),
+                  ],
+                ),
+              )
+            ],
+          ),
           const SizedBox(height: 8),
           Row(
             children: [
@@ -215,7 +346,7 @@ class _DashboardTabState extends State<DashboardTab> {
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             decoration: BoxDecoration(color: const Color(0xFFDCFCE7), borderRadius: BorderRadius.circular(12)),
             child: const Row(children: [
-              Icon(Icons.wifi_tethering, size: 12, color: Color(0xFF166534)), // Changed icon to represent live connection
+              Icon(Icons.wifi_tethering, size: 12, color: Color(0xFF166534)),
               SizedBox(width: 4),
               Text('LIVE SYNC', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Color(0xFF166534))),
             ]),
@@ -232,13 +363,16 @@ class _DashboardTabState extends State<DashboardTab> {
     required double ph, required String phStatus,
     required double turbidity, required String turbStatus,
   }) {
-    return GridView.count(
-      crossAxisCount: isDesktop ? 3 : 2,
-      crossAxisSpacing: 16,
-      mainAxisSpacing: 16,
+    return GridView(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
-      childAspectRatio: 1.5, 
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: isDesktop ? 3 : 2,
+        crossAxisSpacing: 16,
+        mainAxisSpacing: 16,
+        // THE OVERFLOW FIX: Hardcoded extent prevents boxes from shrinking vertically on small phones
+        mainAxisExtent: 125, 
+      ),
       children: [
         _buildSensorCard(title: 'Air Temp', value: airTemp.toStringAsFixed(2), unit: '°C', icon: Icons.air, status: airStatus),
         _buildSensorCard(title: 'Water Temp', value: waterTemp.toStringAsFixed(2), unit: '°C', icon: Icons.thermostat_outlined, status: waterStatus),
@@ -251,7 +385,7 @@ class _DashboardTabState extends State<DashboardTab> {
 
   Widget _buildSensorCard({required String title, required String value, required String unit, required IconData icon, required String status}) {
     return Container(
-      padding: const EdgeInsets.all(16.0),
+      padding: const EdgeInsets.all(14.0),
       decoration: BoxDecoration(
         color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.shade200),
         boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 4, offset: const Offset(0, 2))]
@@ -276,7 +410,13 @@ class _DashboardTabState extends State<DashboardTab> {
             crossAxisAlignment: CrossAxisAlignment.baseline, 
             textBaseline: TextBaseline.alphabetic, 
             children: [
-              Text(value, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Color(0xFF0F172A))),
+              Expanded(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Text(value, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF0F172A))),
+                ),
+              ),
               const SizedBox(width: 4),
               Text(unit, style: const TextStyle(fontSize: 14, color: Color(0xFF64748B), fontWeight: FontWeight.w500)),
             ]
@@ -337,14 +477,11 @@ class _WeatherSummaryCardState extends State<WeatherSummaryCard> {
   bool _isLoading = true, _hasError = false;
   String _temp = "--", _desc = "--", _wind = "--";
   Timer? _timer;
-  final String _apiKey = "06b809ea65b4948afce76db133756173"; 
-  final String _city = "Naic,PH";
 
   @override
   void initState() {
     super.initState();
     _fetchWeather();
-    // Weather APIs should still be polled via timer so we don't spam the free tier limit
     _timer = Timer.periodic(const Duration(minutes: 15), (timer) => _fetchWeather());
   }
 
@@ -357,14 +494,16 @@ class _WeatherSummaryCardState extends State<WeatherSummaryCard> {
   Future<void> _fetchWeather() async {
     if (!mounted) return;
     try {
-      final response = await http.get(Uri.parse("https://api.openweathermap.org/data/2.5/weather?q=$_city&units=metric&appid=$_apiKey"));
+      const String apiUrl = "https://api.open-meteo.com/v1/forecast?latitude=14.3025&longitude=120.7617&current=temperature_2m,weather_code,wind_speed_10m&timezone=Asia%2FManila";
+      
+      final response = await http.get(Uri.parse(apiUrl));
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         if (mounted) {
           setState(() {
-            _temp = "${data['main']['temp'].round()}°C";
-            _desc = data['weather'][0]['main']; 
-            _wind = "${data['wind']['speed']}";
+            _temp = "${data['current']['temperature_2m'].round()}°C";
+            _desc = _getWeatherCondition(data['current']['weather_code']); 
+            _wind = "${data['current']['wind_speed_10m']}";
             _isLoading = false; _hasError = false;
           });
         }
@@ -373,6 +512,25 @@ class _WeatherSummaryCardState extends State<WeatherSummaryCard> {
       }
     } catch (e) {
       if (mounted) setState(() { _hasError = true; _isLoading = false; });
+    }
+  }
+
+  String _getWeatherCondition(int code) {
+    switch(code) {
+      case 0: return "Clear Sky";
+      case 1: return "Mainly Clear";
+      case 2: return "Partly Cloudy";
+      case 3: return "Overcast";
+      case 45: case 48: return "Fog";
+      case 51: return "Light Drizzle";
+      case 53: return "Moderate Drizzle";
+      case 55: return "Dense Drizzle";
+      case 61: return "Slight Rain";
+      case 63: return "Moderate Rain";
+      case 65: return "Heavy Rain";
+      case 80: case 81: case 82: return "Rain Showers";
+      case 95: case 96: case 99: return "Thunderstorm";
+      default: return "Unknown";
     }
   }
 
@@ -388,7 +546,7 @@ class _WeatherSummaryCardState extends State<WeatherSummaryCard> {
               builder: (context, constraints) {
                 bool isMobile = constraints.maxWidth < 500;
                 Widget locationData = Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const Text("Naic, Cavite, PH", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF0F172A))), const SizedBox(height: 4), Text(formattedDate, style: const TextStyle(fontSize: 13, color: Color(0xFF64748B), fontWeight: FontWeight.w500))]);
-                Widget weatherData = Row(mainAxisSize: MainAxisSize.min, children: [const Icon(Icons.cloud, color: Color(0xFF94A3B8), size: 32), const SizedBox(width: 24), Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(_temp, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF0F172A))), Text(_desc, style: const TextStyle(fontSize: 13, color: Color(0xFF64748B)))]), const SizedBox(width: 32), Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(_wind, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF0F172A))), const Text("m/s Wind", style: TextStyle(fontSize: 13, color: Color(0xFF64748B)))])]);
+                Widget weatherData = Row(mainAxisSize: MainAxisSize.min, children: [const Icon(Icons.cloud, color: Color(0xFF94A3B8), size: 32), const SizedBox(width: 24), Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(_temp, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF0F172A))), Text(_desc, style: const TextStyle(fontSize: 13, color: Color(0xFF64748B)))]), const SizedBox(width: 32), Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(_wind, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF0F172A))), const Text("km/h Wind", style: TextStyle(fontSize: 13, color: Color(0xFF64748B)))])]);
                 if (isMobile) return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [locationData, const SizedBox(height: 16), weatherData]);
                 return Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [locationData, weatherData]);
               },

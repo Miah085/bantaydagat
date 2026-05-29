@@ -182,7 +182,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
           ListTile(
             leading: const Icon(Icons.update, color: Color(0xFF546E7A)),
             title: const Text('Data Sync Rate', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
-            trailing: Text('Every 30 seconds', style: TextStyle(color: Colors.grey.shade600)),
+            trailing: Text('Every 5 minutes', style: TextStyle(color: Colors.grey.shade600)),
           ),
         ],
       ),

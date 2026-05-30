@@ -16,33 +16,25 @@ class _EnvironmentalDataTabState extends State<EnvironmentalDataTab> {
   bool _hasError = false;
   Timer? _timer;
   
-  // Current Weather
+  // Current Weather (Strictly aligned with web scope)
   double _currentTemp = 0.0;
   double _feelsLike = 0.0;
   int _humidity = 0;
   double _windSpeed = 0.0;
   double _windDirDegrees = 0.0;
-  double _rain = 0.0;
   int _weatherCode = 0;
   String _lastUpdated = "";
-
-  // New Solar Data
-  double _uvIndex = 0.0;
-  String _sunrise = "--:--";
-  String _sunset = "--:--";
 
   // Forecast Data
   List<dynamic> _forecastDates = [];
   List<dynamic> _forecastCodes = [];
   List<dynamic> _forecastMaxTemp = [];
   List<dynamic> _forecastMinTemp = [];
-  List<dynamic> _forecastRain = [];
 
   @override
   void initState() {
     super.initState();
     _fetchOpenMeteoData();
-    // Refresh every 15 mins to respect Open-Meteo's free tier limits
     _timer = Timer.periodic(const Duration(minutes: 15), (timer) => _fetchOpenMeteoData());
   }
 
@@ -56,9 +48,9 @@ class _EnvironmentalDataTabState extends State<EnvironmentalDataTab> {
     if (!mounted) return;
     setState(() => _isLoading = true);
 
-    // Upgraded API URL to include UV index, sunrise, and sunset
+    // Stripped URL to only fetch exact parameters needed
     const String apiUrl = 
-      "https://api.open-meteo.com/v1/forecast?latitude=14.3025&longitude=120.7617&current=temperature_2m,relative_humidity_2m,apparent_temperature,precipitation,weather_code,wind_speed_10m,wind_direction_10m&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_sum,uv_index_max,sunrise,sunset&timezone=Asia%2FManila";
+      "https://api.open-meteo.com/v1/forecast?latitude=14.3025&longitude=120.7617&current=temperature_2m,relative_humidity_2m,apparent_temperature,weather_code,wind_speed_10m,wind_direction_10m&daily=weather_code,temperature_2m_max,temperature_2m_min&timezone=Asia%2FManila";
 
     try {
       final response = await http.get(Uri.parse(apiUrl));
@@ -72,23 +64,17 @@ class _EnvironmentalDataTabState extends State<EnvironmentalDataTab> {
             _currentTemp = current['temperature_2m'].toDouble();
             _humidity = current['relative_humidity_2m'].toInt();
             _feelsLike = current['apparent_temperature'].toDouble();
-            _rain = current['precipitation'].toDouble();
             _weatherCode = current['weather_code'].toInt();
             _windSpeed = current['wind_speed_10m'].toDouble();
             _windDirDegrees = current['wind_direction_10m'].toDouble();
             _lastUpdated = DateFormat('h:mm:ss a').format(DateTime.now());
 
-            // Parse Daily (5 days & Solar)
+            // Parse Daily (5 days)
             final daily = data['daily'];
             _forecastDates = daily['time'].take(5).toList();
             _forecastCodes = daily['weather_code'].take(5).toList();
             _forecastMaxTemp = daily['temperature_2m_max'].take(5).toList();
             _forecastMinTemp = daily['temperature_2m_min'].take(5).toList();
-            _forecastRain = daily['precipitation_sum'].take(5).toList();
-            
-            _uvIndex = (daily['uv_index_max'][0] ?? 0.0).toDouble();
-            _sunrise = DateFormat('h:mm a').format(DateTime.parse(daily['sunrise'][0]));
-            _sunset = DateFormat('h:mm a').format(DateTime.parse(daily['sunset'][0]));
 
             _isLoading = false;
             _hasError = false;
@@ -173,8 +159,7 @@ class _EnvironmentalDataTabState extends State<EnvironmentalDataTab> {
     String condition = _getWeatherCondition(_weatherCode);
     String windDir = _getWindDirection(_windDirDegrees);
     
-    // Dynamic Favorable/Warning Status based on weather codes
-    bool isFavorable = _weatherCode < 61; // Favorable if it's not raining heavily/thunderstorming
+    bool isFavorable = _weatherCode < 61; 
     Color statusBgColor = isFavorable ? const Color(0xFFECFDF5) : const Color(0xFFFEF2F2);
     Color statusBorderColor = isFavorable ? const Color(0xFFA7F3D0) : const Color(0xFFFECACA);
     Color statusTextColor = isFavorable ? const Color(0xFF065F46) : const Color(0xFF991B1B);
@@ -188,7 +173,6 @@ class _EnvironmentalDataTabState extends State<EnvironmentalDataTab> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // Page Header with Refresh Button
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               crossAxisAlignment: CrossAxisAlignment.start,
@@ -210,7 +194,6 @@ class _EnvironmentalDataTabState extends State<EnvironmentalDataTab> {
             ),
             const SizedBox(height: 24),
 
-            // Dynamic Favorable Banner
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(16),
@@ -227,7 +210,7 @@ class _EnvironmentalDataTabState extends State<EnvironmentalDataTab> {
             ),
             const SizedBox(height: 20),
 
-            // Beautiful Hero Weather Card
+            // Main Visual Hero Card
             Container(
               width: double.infinity,
               padding: const EdgeInsets.all(24),
@@ -274,23 +257,6 @@ class _EnvironmentalDataTabState extends State<EnvironmentalDataTab> {
                   )
                 ],
               ),
-            ),
-            const SizedBox(height: 24),
-
-            // Secondary Stats Grid (UV, Rain, Sunrise, Sunset)
-            GridView.count(
-              crossAxisCount: 2,
-              crossAxisSpacing: 16,
-              mainAxisSpacing: 16,
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              childAspectRatio: 1.6,
-              children: [
-                _buildSecondaryCard("Max UV Index", "$_uvIndex", Icons.brightness_high, const Color(0xFFF59E0B)),
-                _buildSecondaryCard("Precipitation", "$_rain mm", Icons.umbrella_outlined, const Color(0xFF3B82F6)),
-                _buildSecondaryCard("Sunrise", _sunrise, Icons.wb_twilight, const Color(0xFFF97316)),
-                _buildSecondaryCard("Sunset", _sunset, Icons.nights_stay_outlined, const Color(0xFF6366F1)),
-              ],
             ),
             const SizedBox(height: 32),
 
@@ -361,32 +327,6 @@ class _EnvironmentalDataTabState extends State<EnvironmentalDataTab> {
         Text(value, style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 14)),
         Text(label, style: const TextStyle(color: Colors.white70, fontSize: 11)),
       ],
-    );
-  }
-
-  Widget _buildSecondaryCard(String title, String value, IconData icon, Color iconColor) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.grey.shade200)),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Row(
-            children: [
-              Icon(icon, size: 18, color: iconColor),
-              const SizedBox(width: 8),
-              Expanded(child: Text(title, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600, color: Color(0xFF64748B)), overflow: TextOverflow.ellipsis)),
-            ],
-          ),
-          const SizedBox(height: 8),
-          FittedBox(
-            fit: BoxFit.scaleDown,
-            alignment: Alignment.centerLeft,
-            child: Text(value, style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Color(0xFF0F172A))),
-          ),
-        ],
-      ),
     );
   }
 }

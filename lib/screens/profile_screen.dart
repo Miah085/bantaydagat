@@ -1,6 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:firebase_database/firebase_database.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'dart:async';
+
 import 'login_screen.dart'; 
 
 class ProfileScreen extends StatefulWidget {
@@ -11,21 +16,36 @@ class ProfileScreen extends StatefulWidget {
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
-  // Variables to hold the settings
   bool _pushNotifications = true;
   bool _soundAlerts = true;
+
+  // Node Status Tracking
+  DateTime? _lastSeen;
+  StreamSubscription<DatabaseEvent>? _nodeSubscription;
+  Timer? _statusTimer;
+  final String databaseUrl = "https://bantaydagat-default-rtdb.firebaseio.com/";
 
   @override
   void initState() {
     super.initState();
-    _loadSettings(); // Load the saved preferences when the screen boots
+    _loadSettings(); 
+    _trackNodeStatus();
+    // Re-evaluate node status every minute just in case the node dies while looking at the screen
+    _statusTimer = Timer.periodic(const Duration(minutes: 1), (timer) {
+      if (mounted) setState(() {}); 
+    });
   }
 
-  // --- LOCAL STORAGE LOGIC ---
+  @override
+  void dispose() {
+    _nodeSubscription?.cancel();
+    _statusTimer?.cancel();
+    super.dispose();
+  }
+
   Future<void> _loadSettings() async {
     final prefs = await SharedPreferences.getInstance();
     setState(() {
-      // If a setting doesn't exist yet, it defaults to 'true'
       _pushNotifications = prefs.getBool('push_notifications') ?? true;
       _soundAlerts = prefs.getBool('sound_alerts') ?? true;
     });
@@ -36,7 +56,23 @@ class _ProfileScreenState extends State<ProfileScreen> {
     await prefs.setBool(key, value);
   }
 
-  // --- LOGOUT LOGIC ---
+  void _trackNodeStatus() {
+    final db = FirebaseDatabase.instanceFor(app: Firebase.app(), databaseURL: databaseUrl);
+    _nodeSubscription = db.ref('bantaydagat/readings').limitToLast(1).onValue.listen((event) {
+      if (event.snapshot.value != null && mounted) {
+        final Map rawWrapper = event.snapshot.value as Map;
+        final latestData = rawWrapper.values.first as Map;
+        
+        int ts = int.tryParse(latestData['timestamp']?.toString() ?? '0') ?? 0;
+        if (ts > 0 && ts < 10000000000) ts *= 1000;
+        
+        setState(() {
+          _lastSeen = DateTime.fromMillisecondsSinceEpoch(ts);
+        });
+      }
+    });
+  }
+
   Future<void> _handleLogout() async {
     await FirebaseAuth.instance.signOut();
     
@@ -44,7 +80,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       Navigator.pushAndRemoveUntil(
         context,
         MaterialPageRoute(builder: (context) => const LoginScreen()),
-        (route) => false, // Destroys the back-history so they can't swipe back into the app
+        (route) => false, 
       );
     }
   }
@@ -56,7 +92,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
       appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 0.5,
-        automaticallyImplyLeading: false, // Completely removes the useless back button
+        automaticallyImplyLeading: false, 
         title: const Text(
           'Ranger Profile',
           style: TextStyle(color: Color(0xFF1A1A1A), fontWeight: FontWeight.bold, fontSize: 18),
@@ -80,6 +116,9 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Widget _buildIdentityHeader() {
+    // Determine overall connection status based on node status
+    bool isNodeOnline = _lastSeen != null && DateTime.now().difference(_lastSeen!).inMinutes < 10;
+
     return Column(
       children: [
         const CircleAvatar(
@@ -101,12 +140,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
           decoration: BoxDecoration(
-            color: const Color(0xFFE8F5E9),
+            color: isNodeOnline ? const Color(0xFFE8F5E9) : const Color(0xFFFFEBEE),
             borderRadius: BorderRadius.circular(20),
           ),
-          child: const Text(
-            'CONNECTED',
-            style: TextStyle(color: Color(0xFF2E7D32), fontSize: 12, fontWeight: FontWeight.bold),
+          child: Text(
+            isNodeOnline ? 'CONNECTED TO NODE' : 'DISCONNECTED FROM NODE',
+            style: TextStyle(
+              color: isNodeOnline ? const Color(0xFF2E7D32) : const Color(0xFFC62828), 
+              fontSize: 12, 
+              fontWeight: FontWeight.bold
+            ),
           ),
         ),
       ],
@@ -123,7 +166,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
   }
 
- Widget _buildSettingsCard() {
+  Widget _buildSettingsCard() {
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
@@ -140,9 +183,18 @@ class _ProfileScreenState extends State<ProfileScreen> {
             title: const Text('Danger Alerts (Push)', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
             subtitle: Text('Receive notifications for critical water levels', style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
             value: _pushNotifications,
-            onChanged: (bool value) {
+            onChanged: (bool value) async {
               setState(() => _pushNotifications = value);
               _saveSetting('push_notifications', value); 
+              
+              // THE FIX: Actually tell the Firebase Cloud Messaging server to subscribe/unsubscribe
+              if (value) {
+                await FirebaseMessaging.instance.subscribeToTopic('emergency_alerts');
+                debugPrint("Subscribed to emergency_alerts");
+              } else {
+                await FirebaseMessaging.instance.unsubscribeFromTopic('emergency_alerts');
+                debugPrint("Unsubscribed from emergency_alerts");
+              }
             },
           ),
           Divider(height: 1, color: Colors.grey.shade200),
@@ -152,7 +204,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
             inactiveTrackColor: Colors.grey.shade300,
             inactiveThumbColor: Colors.white,
             title: const Text('Sound Alerts', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
-            subtitle: Text('Play alarm sound on critical danger', style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
+            subtitle: Text('Play loud alarm on critical danger', style: TextStyle(fontSize: 12, color: Colors.grey.shade600)),
             value: _soundAlerts,
             onChanged: (bool value) {
               setState(() => _soundAlerts = value);
@@ -165,26 +217,40 @@ class _ProfileScreenState extends State<ProfileScreen> {
   }
 
   Widget _buildSystemCard() {
+    // If the last ping was more than 10 minutes ago, the ESP32 is offline/dead
+    bool isOnline = _lastSeen != null && DateTime.now().difference(_lastSeen!).inMinutes < 10;
+    
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(color: Colors.grey.shade200),
       ),
-      child: Column(
-        children: [
-          ListTile(
-            leading: const Icon(Icons.memory, color: Color(0xFF546E7A)),
-            title: const Text('ESP32 Sensor Node', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
-            trailing: const Text('Online', style: TextStyle(color: Color(0xFF2E7D32), fontWeight: FontWeight.bold)),
+      child: ListTile(
+        leading: Icon(Icons.memory, color: isOnline ? const Color(0xFF546E7A) : const Color(0xFFC62828)),
+        title: const Text('ESP32 Sensor Node', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
+        trailing: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+          decoration: BoxDecoration(
+            color: isOnline ? const Color(0xFFDCFCE7) : const Color(0xFFFEE2E2),
+            borderRadius: BorderRadius.circular(12),
           ),
-          Divider(height: 1, color: Colors.grey.shade200),
-          ListTile(
-            leading: const Icon(Icons.update, color: Color(0xFF546E7A)),
-            title: const Text('Data Sync Rate', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w600)),
-            trailing: Text('Every 30 seconds', style: TextStyle(color: Colors.grey.shade600)),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.circle, size: 8, color: isOnline ? const Color(0xFF16A34A) : const Color(0xFFDC2626)),
+              const SizedBox(width: 6),
+              Text(
+                isOnline ? 'ONLINE' : 'OFFLINE', 
+                style: TextStyle(
+                  color: isOnline ? const Color(0xFF16A34A) : const Color(0xFFDC2626), 
+                  fontWeight: FontWeight.bold,
+                  fontSize: 11
+                )
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }

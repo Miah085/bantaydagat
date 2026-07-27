@@ -1,17 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:firebase_core/firebase_core.dart';
-import 'package:intl/intl.dart'; 
+import 'package:intl/intl.dart';
 import 'dart:convert';
 import 'dart:async';
 import 'package:http/http.dart' as http;
 
-// =========================================================================
-// ARCHITECTURE UPDATE: 
-// Importing the "Rulebook" and the "Data Model"
-// =========================================================================
 import '../config/sensor_constants.dart';
-import '../models/sensor_reading.dart'; 
 
 class DashboardTab extends StatefulWidget {
   const DashboardTab({super.key});
@@ -21,69 +16,169 @@ class DashboardTab extends StatefulWidget {
 }
 
 class _DashboardTabState extends State<DashboardTab> {
-  Timer? _timer;
   bool _isLoading = true;
   
   Map<String, dynamic> _latestData = {};
   Map<dynamic, dynamic> _historyLogs = {};
 
   final String databaseUrl = "https://bantaydagat-default-rtdb.firebaseio.com/";
+  
+  StreamSubscription<DatabaseEvent>? _liveSubscription;
+  StreamSubscription<DatabaseEvent>? _historySubscription;
 
   @override
   void initState() {
     super.initState();
-    _fetchFirebaseData(); 
-    
-    // --- 5-MINUTE POLLING LOGIC ---
-    _timer = Timer.periodic(const Duration(minutes: 5), (timer) {
-      _fetchFirebaseData();
-    });
+    _setupRealtimeStreams(); 
   }
 
   @override
   void dispose() {
-    _timer?.cancel(); 
+    _liveSubscription?.cancel();
+    _historySubscription?.cancel();
     super.dispose();
   }
 
-  Future<void> _fetchFirebaseData() async {
-    try {
-      final liveQuery = FirebaseDatabase.instanceFor(app: Firebase.app(), databaseURL: databaseUrl).ref('bantaydagat/readings').limitToLast(1); 
-      final historyQuery = FirebaseDatabase.instanceFor(app: Firebase.app(), databaseURL: databaseUrl).ref('bantaydagat/readings').limitToLast(15);
+  void _setupRealtimeStreams() {
+    final db = FirebaseDatabase.instanceFor(app: Firebase.app(), databaseURL: databaseUrl);
 
-      final liveSnapshot = await liveQuery.get();
-      final historySnapshot = await historyQuery.get();
-
-      if (mounted) {
+    // THE FIX: Now looking directly at the instant 'latest' node
+    _liveSubscription = db.ref('bantaydagat/latest').onValue.listen((event) {
+      if (event.snapshot.value != null && mounted) {
         setState(() {
-          if (liveSnapshot.value != null) {
-            final Map rawWrapper = liveSnapshot.value as Map;
-            _latestData = Map<String, dynamic>.from(rawWrapper.values.first as Map);
-          }
-          if (historySnapshot.value != null) {
-            _historyLogs = historySnapshot.value as Map<dynamic, dynamic>;
-          }
+          // Parses the single object directly
+          _latestData = Map<String, dynamic>.from(event.snapshot.value as Map);
           _isLoading = false;
         });
       }
-    } catch (e) {
-      debugPrint("❌ ERROR FETCHING FIREBASE DATA: $e");
-      if (mounted) setState(() => _isLoading = false);
-    }
+    });
+
+    // History still safely pulls from the 5-minute 'readings' list
+    _historySubscription = db.ref('bantaydagat/readings').limitToLast(15).onValue.listen((event) {
+      if (event.snapshot.value != null && mounted) {
+        setState(() {
+          _historyLogs = event.snapshot.value as Map<dynamic, dynamic>;
+        });
+      }
+    });
   }
 
-  // Helper to map the String from SensorConstants to your Enum model
-  SafetyLevel _parseSafetyLevel(String statusString) {
-    if (statusString == "SAFE") return SafetyLevel.safe;
-    if (statusString == "CAUTION") return SafetyLevel.caution;
-    return SafetyLevel.danger;
+  void _showAssessmentGuide(BuildContext context) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+      ),
+      builder: (context) {
+        return DraggableScrollableSheet(
+          initialChildSize: 0.75,
+          maxChildSize: 0.9,
+          minChildSize: 0.5,
+          expand: false,
+          builder: (context, scrollController) {
+            return SingleChildScrollView(
+              controller: scrollController,
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 20),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Center(
+                    child: Container(
+                      width: 40, height: 4,
+                      decoration: BoxDecoration(color: Colors.grey.shade300, borderRadius: BorderRadius.circular(2)),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  const Text(
+                    "Release Assessment Guide",
+                    style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Color(0xFF0F172A)),
+                  ),
+                  const SizedBox(height: 4),
+                  const Text(
+                    "How the system automatically evaluates release conditions.",
+                    style: TextStyle(fontSize: 13, color: Color(0xFF64748B)),
+                  ),
+                  const SizedBox(height: 24),
+                  
+                  const Text("SYSTEM STATUS COLOR RULES", style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF64748B), letterSpacing: 1)),
+                  const SizedBox(height: 12),
+                  
+                  _buildGuideRuleRow(color: const Color(0xFF10B981), title: "GO: Safe To Release", desc: "All sensors are within the perfect range. Conditions are entirely normal for the sea turtles.", icon: Icons.check_circle),
+                  _buildGuideRuleRow(color: const Color(0xFFEAB308), title: "Go With Caution", desc: "Only 1 parameter is slightly abnormal. It is generally safe, but rangers should perform a brief visual inspection.", icon: Icons.info_outline),
+                  _buildGuideRuleRow(color: const Color(0xFFF97316), title: "NO-GO: Caution Level", desc: "2 or more parameters are abnormal. Release protocols are paused to prevent risk to the turtles.", icon: Icons.warning_amber_rounded),
+                  _buildGuideRuleRow(color: const Color(0xFFEF4444), title: "NO-GO: Critical Danger", desc: "At least 1 parameter has entered a dangerous threshold! Release is strictly stopped. Immediate water check required.", icon: Icons.block),
+                  
+                  const Divider(height: 32),
+                  const Text("IDEAL PARAMETERS CHECKLIST", style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Color(0xFF64748B), letterSpacing: 1)),
+                  const SizedBox(height: 12),
+                  
+                  _buildTargetRow("Air Temperature", "25.0°C to 32.0°C", Icons.air),
+                  _buildTargetRow("Water Temperature", "26.0°C to 31.0°C", Icons.thermostat),
+                  _buildTargetRow("Humidity", "65% to 85%", Icons.water_drop_outlined),
+                  _buildTargetRow("pH Balance", "7.8 to 8.3 (Slightly Alkaline)", Icons.science_outlined),
+                  _buildTargetRow("Turbidity", "Below 25.0 NTU (Clear Water)", Icons.visibility_outlined),
+                  
+                  const SizedBox(height: 20),
+                  SizedBox(
+                    width: double.infinity,
+                    child: ElevatedButton(
+                      onPressed: () => Navigator.pop(context),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF0F82A0),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      child: const Text("Got it, Close Guide", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
   }
 
-  // Helper for background colors based on your Enum
-  Color _getBgColor(SafetyLevel level) {
-    if (level == SafetyLevel.safe) return Colors.green.shade50;
-    if (level == SafetyLevel.caution) return Colors.orange.shade50;
-    return Colors.red.shade50;
+  Widget _buildGuideRuleRow({required Color color, required String title, required String desc, required IconData icon}) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 16.0),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(icon, color: color, size: 24),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(title, style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: color)),
+                const SizedBox(height: 2),
+                Text(desc, style: const TextStyle(fontSize: 12, color: Color(0xFF475569), height: 1.4)),
+              ],
+            ),
+          )
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTargetRow(String label, String value, IconData icon) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8.0),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: const Color(0xFF64748B)),
+          const SizedBox(width: 12),
+          Text(label, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: Color(0xFF1E293B))),
+          const Spacer(),
+          Text(value, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF0F82A0))),
+        ],
+      ),
+    );
   }
 
   @override
@@ -92,153 +187,249 @@ class _DashboardTabState extends State<DashboardTab> {
       return const Center(child: Padding(padding: EdgeInsets.all(32.0), child: CircularProgressIndicator(color: Color(0xFF0F82A0))));
     }
 
-    // 1. Fetch raw numerical data
-    double rawAir = (_latestData['airTemp'] ?? 0.0).toDouble();
-    double rawWater = (_latestData['waterTemp'] ?? 0.0).toDouble();
-    double rawHum = (_latestData['humidity'] ?? 0.0).toDouble();
-    double rawPh = (_latestData['pH'] ?? 7.0).toDouble();
-    double rawTurb = (_latestData['turbidity'] ?? 0.0).toDouble();
+    double airTemp = (_latestData['air_temperature'] ?? _latestData['airTemp'] ?? 0.0).toDouble();
+    double waterTemp = (_latestData['temperature'] ?? _latestData['waterTemp'] ?? 0.0).toDouble();
+    double humidity = (_latestData['humidity'] ?? 0.0).toDouble();
+    double ph = (_latestData['ph'] ?? _latestData['pH'] ?? 7.8).toDouble();
+    double turbidity = (_latestData['turbidity'] ?? 0.0).toDouble();
 
-    // 2. Package everything into your SensorReading Data Models
-    SensorReading airData = SensorReading(
-      parameter: 'Air Temp',
-      value: rawAir,
-      unit: '°C',
-      status: _parseSafetyLevel(SensorConstants.getStatus(rawAir, 'airTemp')),
+    String airStatus = SensorConstants.getStatus(airTemp, 'airTemp');
+    String waterStatus = SensorConstants.getStatus(waterTemp, 'waterTemp');
+    String humStatus = SensorConstants.getStatus(humidity, 'humidity');
+    String phStatus = SensorConstants.getStatus(ph, 'ph');
+    String turbStatus = SensorConstants.getStatus(turbidity, 'turbidity');
+
+    Map<String, dynamic> assessment = SensorConstants.getOverallAssessment(airTemp, waterTemp, humidity, ph, turbidity);
+
+    return Container(
+      color: const Color(0xFFF8FAFC),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          bool isDesktop = constraints.maxWidth > 900;
+
+          Widget mainContent = Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              _buildPageHeader(),
+              const SizedBox(height: 24),
+              _buildGoNoGoCard(assessment),
+              const SizedBox(height: 24),
+              const WeatherSummaryCard(),
+              const SizedBox(height: 24),
+              _buildSectionHeader('Sensor Data', isActive: true),
+              const SizedBox(height: 16),
+              _buildSensorGrid(
+                isDesktop: isDesktop,
+                airTemp: airTemp, airStatus: airStatus,
+                waterTemp: waterTemp, waterStatus: waterStatus,
+                humidity: humidity, humStatus: humStatus,
+                ph: ph, phStatus: phStatus,
+                turbidity: turbidity, turbStatus: turbStatus,
+              ),
+              if (!isDesktop) ...[
+                const SizedBox(height: 32),
+                _buildSectionHeader('History Logs', isActive: true),
+                const SizedBox(height: 16),
+                _buildHistoryLogs(),
+              ]
+            ],
+          );
+
+          if (isDesktop) {
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Expanded(flex: 7, child: SingleChildScrollView(padding: const EdgeInsets.all(32.0), child: mainContent)),
+                Expanded(
+                  flex: 3,
+                  child: Container(
+                    decoration: BoxDecoration(color: Colors.white, border: Border(left: BorderSide(color: Colors.grey.shade200))),
+                    child: SingleChildScrollView(
+                      padding: const EdgeInsets.all(24.0),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          _buildSectionHeader('History Logs', isActive: true),
+                          const SizedBox(height: 16),
+                          _buildHistoryLogs(),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            );
+          }
+
+          return SingleChildScrollView(padding: const EdgeInsets.all(16.0), child: mainContent);
+        },
+      ),
     );
+  }
 
-    SensorReading waterData = SensorReading(
-      parameter: 'Water Temp',
-      value: rawWater,
-      unit: '°C',
-      status: _parseSafetyLevel(SensorConstants.getStatus(rawWater, 'waterTemp')),
+  Widget _buildPageHeader() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text("Overview", style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold, color: Color(0xFF0F172A))),
+        const SizedBox(height: 4),
+        Text("Live sensor feeds and automated action recommendations.", style: TextStyle(fontSize: 14, color: Colors.blueGrey.shade400)),
+      ],
     );
+  }
 
-    SensorReading humData = SensorReading(
-      parameter: 'Humidity',
-      value: rawHum,
-      unit: '%',
-      status: _parseSafetyLevel(SensorConstants.getStatus(rawHum, 'humidity')),
-    );
+  Widget _buildGoNoGoCard(Map<String, dynamic> assessment) {
+    Color mainColor = assessment['color'];
+    Color bgColor = mainColor.withOpacity(0.1);
+    
+    String subtext = assessment['status'].contains('GO WITH CAUTION') 
+        ? 'One parameter is near limits. Proceed with visual checks.'
+        : assessment['status'].contains('NO-GO') 
+            ? 'Water quality conditions have halted release protocols.' 
+            : 'All water parameters are strictly within physiological thresholds.';
 
-    SensorReading phData = SensorReading(
-      parameter: 'pH Level',
-      value: rawPh,
-      unit: 'pH',
-      status: _parseSafetyLevel(SensorConstants.getStatus(rawPh, 'ph')),
-    );
-
-    SensorReading turbData = SensorReading(
-      parameter: 'Turbidity',
-      value: rawTurb,
-      unit: 'NTU',
-      status: _parseSafetyLevel(SensorConstants.getStatus(rawTurb, 'turbidity')),
-    );
-
-    // 3. Evaluate overall system health
-    List<SensorReading> allSensors = [airData, waterData, humData, phData, turbData];
-    int cautionCount = allSensors.where((s) => s.status == SafetyLevel.caution).length;
-    int dangerCount = allSensors.where((s) => s.status == SafetyLevel.danger).length;
-    bool isGoRecommendation = (cautionCount == 0 && dangerCount == 0);
-
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16.0),
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 24),
+      decoration: BoxDecoration(
+        color: bgColor,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: mainColor.withOpacity(0.3), width: 1),
+      ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Expanded(child: _buildSummaryCard(title: "CAUTION", count: cautionCount.toString(), label: "Warning level", color: Colors.orange)),
-              const SizedBox(width: 12),
-              Expanded(child: _buildSummaryCard(title: "DANGER", count: dangerCount.toString(), label: "Critical level", color: Colors.red)),
+              Text('PRE-RELEASE RECOMMENDATION', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, letterSpacing: 0.5, color: mainColor)),
+              InkWell(
+                onTap: () => _showAssessmentGuide(context),
+                child: Row(
+                  children: [
+                    Icon(Icons.help_outline, size: 14, color: mainColor),
+                    const SizedBox(width: 4),
+                    Text(
+                      'How this works',
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: mainColor, decoration: TextDecoration.underline),
+                    ),
+                  ],
+                ),
+              )
             ],
           ),
-          const SizedBox(height: 20),
-
-          _buildGoNoGoCard(isGoRecommendation),
-          const SizedBox(height: 24),
-          
-          _buildSectionHeader('Naic, Cavite Weather', isLive: true),
-          const SizedBox(height: 16),
-          const WeatherSummaryCard(),
-          const SizedBox(height: 24),
-          
-          _buildSectionHeader('Sensor Data (5m Sync)', isLive: true),
-          const SizedBox(height: 16),
-          
-          GridView.count(
-            crossAxisCount: 2,
-            crossAxisSpacing: 16,
-            mainAxisSpacing: 16,
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            childAspectRatio: 0.9,
+          const SizedBox(height: 8),
+          Row(
             children: [
-              // Notice how clean these are now! We just pass the Model.
-              _buildSensorCard(reading: airData, icon: Icons.air),
-              _buildSensorCard(reading: waterData, icon: Icons.thermostat_outlined),
-              _buildSensorCard(reading: humData, icon: Icons.water_drop_outlined),
-              _buildSensorCard(reading: phData, icon: Icons.science_outlined),
-              _buildSensorCard(reading: turbData, icon: Icons.visibility_outlined),
+              Icon(assessment['icon'], color: mainColor, size: 28),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  assessment['status'], 
+                  style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: mainColor),
+                ),
+              ),
             ],
           ),
-
-          const SizedBox(height: 32),
-          _buildSectionHeader('History Logs', isLive: false),
-          const SizedBox(height: 16),
-
-          _buildHistoryLogs(),
+          const SizedBox(height: 8),
+          Text(subtext, style: TextStyle(fontSize: 14, color: mainColor.withOpacity(0.8))),
         ],
       ),
     );
   }
 
-  // The UI card now takes a single SensorReading object instead of 7 different parameters
-  Widget _buildSensorCard({required SensorReading reading, required IconData icon}) {
-    Color bgColor = _getBgColor(reading.status);
-    
+  Widget _buildSectionHeader(String title, {required bool isActive}) {
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+      children: [
+        Text(title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF0F172A))),
+        if (isActive)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(color: const Color(0xFFDCFCE7), borderRadius: BorderRadius.circular(12)),
+            child: const Row(children: [
+              Icon(Icons.wifi_tethering, size: 12, color: Color(0xFF166534)),
+              SizedBox(width: 4),
+              Text('LIVE SYNC', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Color(0xFF166534))),
+            ]),
+          )
+      ],
+    );
+  }
+
+  Widget _buildSensorGrid({
+    required bool isDesktop,
+    required double airTemp, required String airStatus,
+    required double waterTemp, required String waterStatus,
+    required double humidity, required String humStatus,
+    required double ph, required String phStatus,
+    required double turbidity, required String turbStatus,
+  }) {
+    return GridView(
+      shrinkWrap: true,
+      physics: const NeverScrollableScrollPhysics(),
+      gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+        crossAxisCount: isDesktop ? 3 : 2,
+        crossAxisSpacing: 16,
+        mainAxisSpacing: 16,
+        // THE OVERFLOW FIX: Hardcoded extent prevents boxes from shrinking vertically on small phones
+        mainAxisExtent: 125, 
+      ),
+      children: [
+        _buildSensorCard(title: 'Air Temp', value: airTemp.toStringAsFixed(2), unit: '°C', icon: Icons.air, status: airStatus),
+        _buildSensorCard(title: 'Water Temp', value: waterTemp.toStringAsFixed(2), unit: '°C', icon: Icons.thermostat_outlined, status: waterStatus),
+        _buildSensorCard(title: 'Humidity', value: humidity.toStringAsFixed(2), unit: '%', icon: Icons.water_drop_outlined, status: humStatus),
+        _buildSensorCard(title: 'pH Level', value: ph.toStringAsFixed(2), unit: 'pH', icon: Icons.science_outlined, status: phStatus),
+        _buildSensorCard(title: 'Turbidity', value: turbidity.toStringAsFixed(2), unit: 'NTU', icon: Icons.visibility_outlined, status: turbStatus),
+      ],
+    );
+  }
+
+  Widget _buildSensorCard({required String title, required String value, required String unit, required IconData icon, required String status}) {
     return Container(
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.shade200)),
-      child: Stack(
+      padding: const EdgeInsets.all(14.0),
+      decoration: BoxDecoration(
+        color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.shade200),
+        boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 4, offset: const Offset(0, 2))]
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
-          Padding(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Icon(icon, color: const Color(0xFF546E7A), size: 20),
-                    Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4), 
-                      decoration: BoxDecoration(color: bgColor, borderRadius: BorderRadius.circular(12)), 
-                      // Pulling text and color directly from your data model!
-                      child: Text(reading.statusText, style: TextStyle(color: reading.statusColor, fontSize: 10, fontWeight: FontWeight.bold))
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 16),
-                Text(reading.parameter, style: TextStyle(color: Colors.blueGrey.shade400, fontSize: 13)),
-                const Spacer(),
-                Row(crossAxisAlignment: CrossAxisAlignment.baseline, textBaseline: TextBaseline.alphabetic, children: [
-                  Text(reading.value.toStringAsFixed(1), style: const TextStyle(fontSize: 28, fontWeight: FontWeight.bold)),
-                  const SizedBox(width: 4),
-                  Text(reading.unit, style: TextStyle(fontSize: 14, color: Colors.blueGrey.shade400)),
-                ]),
-                const SizedBox(height: 20),
-              ],
-            ),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Icon(icon, color: const Color(0xFF64748B), size: 20),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4), 
+                decoration: BoxDecoration(color: SensorConstants.getStatusBgColor(status), borderRadius: BorderRadius.circular(12)), 
+                child: Text(status, style: TextStyle(color: SensorConstants.getStatusColor(status), fontSize: 10, fontWeight: FontWeight.bold))
+              ),
+            ],
           ),
-          Positioned(bottom: 12, left: 16, right: 16, child: CustomPaint(size: const Size(double.infinity, 15), painter: SparklinePainter(color: reading.statusColor))),
+          Text(title, style: const TextStyle(color: Color(0xFF64748B), fontSize: 13, fontWeight: FontWeight.w500)),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.baseline, 
+            textBaseline: TextBaseline.alphabetic, 
+            children: [
+              Expanded(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: Alignment.centerLeft,
+                  child: Text(value, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF0F172A))),
+                ),
+              ),
+              const SizedBox(width: 4),
+              Text(unit, style: const TextStyle(fontSize: 14, color: Color(0xFF64748B), fontWeight: FontWeight.w500)),
+            ]
+          ),
         ],
       ),
     );
   }
 
   Widget _buildHistoryLogs() {
-    if (_historyLogs.isEmpty) return const Center(child: Text("No history data found."));
-    
+    if (_historyLogs.isEmpty) return const Text("No history data found.");
     final sortedKeys = _historyLogs.keys.toList()..sort((a, b) => b.compareTo(a));
 
     return ListView.builder(
@@ -249,123 +440,51 @@ class _DashboardTabState extends State<DashboardTab> {
         final log = Map<String, dynamic>.from(_historyLogs[sortedKeys[index]] as Map);
         int ts = log['timestamp'] ?? 0;
         DateTime date = DateTime.fromMillisecondsSinceEpoch(ts).toLocal();
-        String formattedTime = DateFormat('hh:mm:ss a').format(date);
+        String formattedDateTime = DateFormat('MMM d, yyyy • hh:mm a').format(date);
 
-        return Card(
-          margin: const EdgeInsets.only(bottom: 12),
-          elevation: 0,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12), side: BorderSide(color: Colors.grey.shade200)),
-          child: ListTile(
-            leading: Container(padding: const EdgeInsets.all(8), decoration: BoxDecoration(color: const Color(0xFF0F82A0).withOpacity(0.1), shape: BoxShape.circle), child: const Icon(Icons.history, color: Color(0xFF0F82A0), size: 20)),
-            title: Text("Air: ${log['airTemp'] ?? '--'}°C | Hum: ${log['humidity'] ?? '--'}%", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-            subtitle: Text("Recorded at $formattedTime", style: const TextStyle(fontSize: 12)),
-            trailing: const Icon(Icons.check_circle, color: Colors.green, size: 16),
+        String logAir = (log['air_temperature'] ?? log['airTemp'] ?? '--').toString();
+        String logHum = (log['humidity'] ?? '--').toString();
+
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 16.0),
+          child: Row(
+            children: [
+              Container(padding: const EdgeInsets.all(8), decoration: const BoxDecoration(color: Color(0xFFF1F5F9), shape: BoxShape.circle), child: const Icon(Icons.history, color: Color(0xFF64748B), size: 16)),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text("Air: $logAir°C | Hum: $logHum%", style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13, color: Color(0xFF0F172A))),
+                    Text(formattedDateTime, style: const TextStyle(fontSize: 11, color: Color(0xFF94A3B8))),
+                  ],
+                ),
+              ),
+              const Icon(Icons.check_circle, color: Color(0xFF10B981), size: 16),
+            ],
           ),
         );
       },
     );
   }
-
-  Widget _buildSummaryCard({required String title, required String count, required String label, required Color color}) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(8), border: Border.all(color: Colors.grey.shade200)),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(title, style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
-          const SizedBox(height: 8),
-          Text(count, style: TextStyle(color: color, fontSize: 32, fontWeight: FontWeight.bold)),
-          const SizedBox(height: 4),
-          Text(label, style: TextStyle(color: Colors.grey.shade500, fontSize: 12)),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildSectionHeader(String title, {required bool isLive}) {
-    return Row(
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Text(title, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF2C3E50))),
-        if (isLive)
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            decoration: BoxDecoration(color: Colors.green.shade50, borderRadius: BorderRadius.circular(12)),
-            child: Row(children: [
-              Icon(Icons.sync, size: 12, color: Colors.green.shade700),
-              const SizedBox(width: 4),
-              Text('ACTIVE', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.green.shade700)),
-            ]),
-          )
-      ],
-    );
-  }
-
-  Widget _buildGoNoGoCard(bool isGoRecommendation) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.symmetric(vertical: 24, horizontal: 20),
-      decoration: BoxDecoration(
-        color: isGoRecommendation ? const Color(0xFFE8F5E9) : const Color(0xFFFFEBEE),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: isGoRecommendation ? const Color(0xFFA5D6A7) : const Color(0xFFEF9A9A), width: 2),
-      ),
-      child: Column(
-        children: [
-          Text('PRE-RELEASE RECOMMENDATION', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, letterSpacing: 1.2, color: isGoRecommendation ? const Color(0xFF2E7D32) : const Color(0xFFC62828))),
-          const SizedBox(height: 8),
-          Text(isGoRecommendation ? 'SAFE TO RELEASE' : 'DO NOT RELEASE', style: TextStyle(fontSize: 22, fontWeight: FontWeight.w900, color: isGoRecommendation ? const Color(0xFF2E7D32) : const Color(0xFFC62828), letterSpacing: 0.5)),
-          const SizedBox(height: 8),
-          Text(isGoRecommendation ? 'Water parameters are within safe thresholds.' : 'Water quality conditions are not suitable for safe release. Review alerts below.', textAlign: TextAlign.center, style: TextStyle(fontSize: 14, fontWeight: FontWeight.w500, color: isGoRecommendation ? Colors.green.shade800 : Colors.red.shade800)),
-        ],
-      ),
-    );
-  }
 }
-
-class SparklinePainter extends CustomPainter {
-  final Color color;
-  SparklinePainter({required this.color});
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()..color = color..strokeWidth = 2.0..style = PaintingStyle.stroke..strokeCap = StrokeCap.round;
-    final path = Path();
-    path.moveTo(0, size.height * 0.8);
-    path.quadraticBezierTo(size.width * 0.25, size.height, size.width * 0.5, size.height * 0.5);
-    path.quadraticBezierTo(size.width * 0.75, 0, size.width, size.height * 0.2);
-    canvas.drawPath(path, paint);
-  }
-  @override bool shouldRepaint(covariant CustomPainter oldDelegate) => false;
-}
-
-// =========================================================================
-// OPENWEATHERMAP API WIDGET 
-// =========================================================================
 
 class WeatherSummaryCard extends StatefulWidget {
   const WeatherSummaryCard({super.key});
-
   @override
   State<WeatherSummaryCard> createState() => _WeatherSummaryCardState();
 }
 
 class _WeatherSummaryCardState extends State<WeatherSummaryCard> {
-  bool _isLoading = true;
-  bool _hasError = false;
-  String _temp = "--";
-  String _desc = "--";
-  String _wind = "--";
+  bool _isLoading = true, _hasError = false;
+  String _temp = "--", _desc = "--", _wind = "--";
   Timer? _timer;
-
-  final String _apiKey = "06b809ea65b4948afce76db133756173"; 
-  final String _city = "Naic,PH";
 
   @override
   void initState() {
     super.initState();
     _fetchWeather();
-    _timer = Timer.periodic(const Duration(minutes: 10), (timer) => _fetchWeather());
+    _timer = Timer.periodic(const Duration(minutes: 15), (timer) => _fetchWeather());
   }
 
   @override
@@ -376,78 +495,64 @@ class _WeatherSummaryCardState extends State<WeatherSummaryCard> {
 
   Future<void> _fetchWeather() async {
     if (!mounted) return;
-    
     try {
-      final response = await http.get(Uri.parse(
-          "https://api.openweathermap.org/data/2.5/weather?q=$_city&units=metric&appid=$_apiKey"));
-
+      const String apiUrl = "https://api.open-meteo.com/v1/forecast?latitude=14.3025&longitude=120.7617&current=temperature_2m,weather_code,wind_speed_10m&timezone=Asia%2FManila";
+      
+      final response = await http.get(Uri.parse(apiUrl));
       if (response.statusCode == 200) {
         final data = jsonDecode(response.body);
         if (mounted) {
           setState(() {
-            _temp = "${data['main']['temp'].round()}°C";
-            _desc = data['weather'][0]['main']; 
-            _wind = "${data['wind']['speed']} m/s";
-            _isLoading = false;
-            _hasError = false;
+            _temp = "${data['current']['temperature_2m'].round()}°C";
+            _desc = _getWeatherCondition(data['current']['weather_code']); 
+            _wind = "${data['current']['wind_speed_10m']}";
+            _isLoading = false; _hasError = false;
           });
         }
       } else {
-        throw Exception("API Connection Failed");
+        throw Exception();
       }
     } catch (e) {
-      if (mounted) {
-        setState(() {
-          _hasError = true;
-          _isLoading = false;
-        });
-      }
+      if (mounted) setState(() { _hasError = true; _isLoading = false; });
+    }
+  }
+
+  String _getWeatherCondition(int code) {
+    switch(code) {
+      case 0: return "Clear Sky";
+      case 1: return "Mainly Clear";
+      case 2: return "Partly Cloudy";
+      case 3: return "Overcast";
+      case 45: case 48: return "Fog";
+      case 51: return "Light Drizzle";
+      case 53: return "Moderate Drizzle";
+      case 55: return "Dense Drizzle";
+      case 61: return "Slight Rain";
+      case 63: return "Moderate Rain";
+      case 65: return "Heavy Rain";
+      case 80: case 81: case 82: return "Rain Showers";
+      case 95: case 96: case 99: return "Thunderstorm";
+      default: return "Unknown";
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    String formattedDate = DateFormat('EEEE, MMM d, yyyy, h:mm a').format(DateTime.now());
     return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.shade200)),
-      child: _isLoading
-          ? const Center(child: Padding(padding: EdgeInsets.all(8.0), child: CircularProgressIndicator(color: Color(0xFF0F82A0))))
-          : _hasError
-              ? Row(
-                  children: [
-                    const Icon(Icons.cloud_off, color: Colors.grey),
-                    const SizedBox(width: 8),
-                    Text("API Weather data currently unavailable.", style: TextStyle(color: Colors.grey.shade600, fontSize: 13)),
-                  ],
-                )
-              : Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                  children: [
-                    Row(
-                      children: [
-                        Container(padding: const EdgeInsets.all(12), decoration: BoxDecoration(color: Colors.blue.shade50, shape: BoxShape.circle), child: const Icon(Icons.cloud, color: Colors.blue, size: 28)),
-                        const SizedBox(width: 16),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(_temp, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Color(0xFF1E293B))),
-                            Text(_desc, style: TextStyle(fontSize: 14, color: Colors.blueGrey.shade400, fontWeight: FontWeight.w500)),
-                          ],
-                        ),
-                      ],
-                    ),
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        const Icon(Icons.air, color: Color(0xFF546E7A), size: 20),
-                        const SizedBox(height: 4),
-                        Text(_wind, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: Color(0xFF2C3E50))),
-                        Text("Wind", style: TextStyle(fontSize: 11, color: Colors.blueGrey.shade400)),
-                      ],
-                    ),
-                  ],
-                ),
+      width: double.infinity, padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: Colors.grey.shade200), boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.02), blurRadius: 4, offset: const Offset(0, 2))]),
+      child: _isLoading ? const Center(child: Padding(padding: EdgeInsets.all(8.0), child: CircularProgressIndicator(color: Color(0xFF0F82A0))))
+          : _hasError ? const Text("Weather data unavailable.", style: TextStyle(color: Colors.grey))
+          : LayoutBuilder(
+              builder: (context, constraints) {
+                bool isMobile = constraints.maxWidth < 500;
+                Widget locationData = Column(crossAxisAlignment: CrossAxisAlignment.start, children: [const Text("Naic, Cavite, PH", style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF0F172A))), const SizedBox(height: 4), Text(formattedDate, style: const TextStyle(fontSize: 13, color: Color(0xFF64748B), fontWeight: FontWeight.w500))]);
+                Widget weatherData = Row(mainAxisSize: MainAxisSize.min, children: [const Icon(Icons.cloud, color: Color(0xFF94A3B8), size: 32), const SizedBox(width: 24), Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(_temp, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF0F172A))), Text(_desc, style: const TextStyle(fontSize: 13, color: Color(0xFF64748B)))]), const SizedBox(width: 32), Column(crossAxisAlignment: CrossAxisAlignment.start, children: [Text(_wind, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Color(0xFF0F172A))), const Text("km/h Wind", style: TextStyle(fontSize: 13, color: Color(0xFF64748B)))])]);
+                if (isMobile) return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [locationData, const SizedBox(height: 16), weatherData]);
+                return Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [locationData, weatherData]);
+              },
+            ),
     );
   }
 }

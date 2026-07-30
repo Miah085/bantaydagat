@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:intl/intl.dart';
+import 'dart:ui';
 import 'dart:async';
 
 import '../config/sensor_constants.dart';
@@ -15,53 +16,25 @@ class TrendsTab extends StatefulWidget {
 
 class _TrendsTabState extends State<TrendsTab> {
   bool _isLoading = true;
-  List<Map<String, dynamic>> _readings = [];
-  
-  final String databaseUrl = "https://bantaydagat-default-rtdb.firebaseio.com/";
+  List<Map<String, dynamic>> _weeklyData = [];
+  String _mainBgImagePath = 'assets/images/bg_safe.jpg';
+
   StreamSubscription<DatabaseEvent>? _historySubscription;
+  StreamSubscription<DatabaseEvent>? _liveSubscription; // ADDED: Live sync for background
+  final String databaseUrl = "https://bantaydagat-default-rtdb.firebaseio.com/";
 
   @override
   void initState() {
     super.initState();
-    _fetchData();
+    _setupRealtimeBackgroundSync();
+    _fetchWeeklyHistory();
   }
 
   @override
   void dispose() {
     _historySubscription?.cancel();
+    _liveSubscription?.cancel();
     super.dispose();
-  }
-
-  void _fetchData() {
-    setState(() => _isLoading = true);
-    final db = FirebaseDatabase.instanceFor(app: Firebase.app(), databaseURL: databaseUrl);
-    
-    // Pull enough readings to cover the last 7 days (approx 2000 readings if logging every 5 mins)
-    _historySubscription = db.ref('bantaydagat/readings').limitToLast(2500).onValue.listen((event) {
-      if (event.snapshot.value != null && mounted) {
-        final Map rawData = event.snapshot.value as Map;
-        List<Map<String, dynamic>> updatedLogs = rawData.entries.map((e) => Map<String, dynamic>.from(e.value as Map)).toList();
-        
-        DateTime cutoff = DateTime.now().subtract(const Duration(days: 7));
-
-        updatedLogs = updatedLogs.where((log) {
-          int ts = int.tryParse(log['timestamp']?.toString() ?? '0') ?? 0;
-          if (ts > 0 && ts < 10000000000) ts *= 1000;
-          DateTime date = DateTime.fromMillisecondsSinceEpoch(ts);
-          return date.isAfter(cutoff);
-        }).toList();
-
-        setState(() {
-          _readings = updatedLogs;
-          _isLoading = false;
-        });
-      } else {
-        setState(() {
-          _readings = [];
-          _isLoading = false;
-        });
-      }
-    });
   }
 
   double _parseDouble(dynamic value) {
@@ -71,189 +44,323 @@ class _TrendsTabState extends State<TrendsTab> {
     return double.tryParse(value.toString()) ?? 0.0;
   }
 
-  // === WHITEBOARD CALENDAR LOGIC ===
-  // Groups raw readings into 7 discrete days and assigns a single color/status to each day
-  List<Map<String, dynamic>> _generateDailySummary() {
-    // 1. Initialize the last 7 days in order (Today first, going backwards)
-    List<Map<String, dynamic>> daysList = [];
-    DateTime now = DateTime.now();
-    
-    for (int i = 0; i < 7; i++) {
-      DateTime targetDay = now.subtract(Duration(days: i));
-      String dateString = DateFormat('EEEE, MMM d').format(targetDay);
-      
-      daysList.add({
-        'dateLabel': i == 0 ? 'TODAY' : (i == 1 ? 'YESTERDAY' : dateString.toUpperCase()),
-        'dateString': dateString,
-        'targetDay': targetDay,
-        'readingsCount': 0,
-        'hasDanger': false,
-        'hasCaution': false,
-      });
-    }
+  // --- NEW: Syncs background perfectly with Dashboard ---
+  void _setupRealtimeBackgroundSync() {
+    final db = FirebaseDatabase.instanceFor(app: Firebase.app(), databaseURL: databaseUrl);
+    _liveSubscription = db.ref('bantaydagat/latest').onValue.listen((event) {
+      if (event.snapshot.value != null && mounted) {
+        final data = Map<String, dynamic>.from(event.snapshot.value as Map);
+        
+        double airTemp = _parseDouble(data['airTemp']);
+        double waterTemp = _parseDouble(data['waterTemp']);
+        double humidity = _parseDouble(data['humidity']);
+        double ph = _parseDouble(data['pH']);
+        double turbidity = _parseDouble(data['turbidity']);
 
-    // 2. Sort readings into their respective days
-    for (var log in _readings) {
-      int ts = int.tryParse(log['timestamp']?.toString() ?? '0') ?? 0;
-      if (ts > 0 && ts < 10000000000) ts *= 1000;
-      DateTime logDate = DateTime.fromMillisecondsSinceEpoch(ts);
-      String logDateString = DateFormat('EEEE, MMM d').format(logDate);
+        String airStatus = SensorConstants.getStatus('airTemp', airTemp);
+        String waterStatus = SensorConstants.getStatus('waterTemp', waterTemp);
+        String humStatus = SensorConstants.getStatus('humidity', humidity);
+        String phStatus = SensorConstants.getStatus('ph', ph);
+        String turbStatus = SensorConstants.getStatus('turbidity', turbidity);
 
-      // Find matching day in our list
-      for (var day in daysList) {
-        if (day['dateString'] == logDateString) {
-          day['readingsCount'] = (day['readingsCount'] as int) + 1;
-          
-          double air = _parseDouble(log['air_temperature'] ?? log['airTemp']);
-          double water = _parseDouble(log['temperature'] ?? log['waterTemp']);
-          double hum = _parseDouble(log['humidity']);
-          double ph = _parseDouble(log['ph'] ?? log['pH'] ?? 7.8);
-          double turb = _parseDouble(log['turbidity']);
-
-          String airStat = SensorConstants.getStatus('airTemp', air);
-          String waterStat = SensorConstants.getStatus('waterTemp', water);
-          String humStat = SensorConstants.getStatus('humidity', hum);
-          String phStat = SensorConstants.getStatus('ph', ph);
-          String turbStat = SensorConstants.getStatus('turbidity', turb);
-
-          Map<String, dynamic> assessment = SensorConstants.calculateOverallReleaseStatus([
-            airStat, waterStat, humStat, phStat, turbStat
-          ]);
-
-          if (assessment['status'].toString().contains('DANGER') || assessment['status'].toString().contains('NO-GO')) {
-            day['hasDanger'] = true;
-          } else if (assessment['status'].toString().contains('CAUTION')) {
-            day['hasCaution'] = true;
-          }
-          break; // Found the day, move to next log
+        Map<String, dynamic> assessment = SensorConstants.calculateOverallReleaseStatus([
+          airStatus, waterStatus, humStatus, phStatus, turbStatus
+        ]);
+        
+        Color statusColor = _getStrictStatusColor(assessment['status'].toString());
+        String newBg = 'assets/images/bg_safe.jpg';
+        
+        if (statusColor == const Color(0xFFEF4444)) {
+          newBg = 'assets/images/bg_danger.png';
+        } else if (statusColor == const Color(0xFFF59E0B)) {
+          newBg = 'assets/images/bg_caution.png';
         }
-      }
-    }
 
-    // 3. Assign final traffic-light status per day
-    for (var day in daysList) {
-      if (day['readingsCount'] == 0) {
-        day['statusText'] = 'NO DATA';
-        day['color'] = Colors.grey.shade400;
-        day['icon'] = Icons.help_outline;
-      } else if (day['hasDanger'] == true) {
-        day['statusText'] = 'DANGER: NO RELEASE';
-        day['color'] = const Color(0xFFEF4444); // Solid Red
-        day['icon'] = Icons.block;
-      } else if (day['hasCaution'] == true) {
-        day['statusText'] = 'CAUTION';
-        day['color'] = const Color(0xFFF59E0B); // Solid Yellow/Amber
-        day['icon'] = Icons.warning_amber_rounded;
+        setState(() {
+          _mainBgImagePath = newBg;
+        });
+      }
+    });
+  }
+
+  void _fetchWeeklyHistory() {
+    final db = FirebaseDatabase.instanceFor(app: Firebase.app(), databaseURL: databaseUrl);
+    
+    _historySubscription = db.ref('bantaydagat/readings')
+        .orderByChild('timestamp')
+        .limitToLast(100)
+        .onValue.listen((event) {
+      if (event.snapshot.value != null && mounted) {
+        final Map<dynamic, dynamic> rawData = event.snapshot.value as Map<dynamic, dynamic>;
+        _processWeeklyData(rawData);
+      } else if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    });
+  }
+
+  void _processWeeklyData(Map<dynamic, dynamic> rawData) {
+    List<Map<String, dynamic>> allReadings = [];
+    
+    rawData.forEach((key, value) {
+      allReadings.add(Map<String, dynamic>.from(value));
+    });
+
+    allReadings.sort((a, b) => (b['timestamp'] ?? 0).compareTo(a['timestamp'] ?? 0));
+
+    List<Map<String, dynamic>> processedDays = [];
+    DateTime now = DateTime.now();
+
+    for (int i = 0; i < 7; i++) {
+      DateTime targetDate = now.subtract(Duration(days: i));
+      String dateString = DateFormat('yyyy-MM-dd').format(targetDate);
+      
+      var readingForDay = allReadings.cast<Map<String, dynamic>?>().firstWhere((reading) {
+        if (reading == null || reading['timestamp'] == null) return false;
+        DateTime readingDate = DateTime.fromMillisecondsSinceEpoch(reading['timestamp']);
+        return DateFormat('yyyy-MM-dd').format(readingDate) == dateString;
+      }, orElse: () => null);
+
+      if (readingForDay != null) {
+        processedDays.add({'date': targetDate, 'hasData': true, 'data': readingForDay});
       } else {
-        day['statusText'] = 'SAFE TO RELEASE';
-        day['color'] = const Color(0xFF10B981); // Solid Green
-        day['icon'] = Icons.check_circle;
+        processedDays.add({'date': targetDate, 'hasData': false});
       }
     }
 
-    return daysList;
+    setState(() {
+      _weeklyData = processedDays;
+      _isLoading = false;
+    });
+  }
+
+  Color _getStrictStatusColor(String status) {
+    String s = status.toUpperCase();
+    if (s.contains('SAFE') || s == 'GO') return const Color(0xFF10B981); 
+    if (s.contains('CAUTION') || s.contains('WARNING')) return const Color(0xFFF59E0B); 
+    if (s.contains('DANGER') || s.contains('NO-GO')) return const Color(0xFFEF4444); 
+    return const Color(0xFF94A3B8); 
+  }
+
+  String _formatDayHeader(DateTime date) {
+    DateTime now = DateTime.now();
+    if (date.year == now.year && date.month == now.month && date.day == now.day) return "TODAY";
+    if (date.year == now.year && date.month == now.month && date.day == now.day - 1) return "YESTERDAY";
+    return DateFormat('EEEE, MMM d').format(date).toUpperCase();
   }
 
   @override
   Widget build(BuildContext context) {
-    if (_isLoading) {
-      return const Center(child: CircularProgressIndicator(color: Color(0xFF0F82A0)));
-    }
+    return Stack(
+      children: [
+        RepaintBoundary(
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 800),
+            transitionBuilder: (child, animation) => FadeTransition(opacity: animation, child: child),
+            child: Container(
+              key: ValueKey<String>(_mainBgImagePath),
+              width: double.infinity,
+              height: double.infinity,
+              decoration: BoxDecoration(
+                color: const Color(0xFF0F172A),
+                image: _isLoading 
+                  ? null 
+                  : DecorationImage(
+                      image: AssetImage(_mainBgImagePath),
+                      fit: BoxFit.cover,
+                      colorFilter: ColorFilter.mode(Colors.black.withOpacity(0.4), BlendMode.darken),
+                    ),
+              ),
+            ),
+          ),
+        ),
+        
+        RepaintBoundary(
+          child: SizedBox(
+            width: double.infinity,
+            height: double.infinity,
+            child: _isLoading 
+              ? const Center(child: CircularProgressIndicator(color: Colors.white))
+              : ListView.builder(
+                  padding: const EdgeInsets.fromLTRB(16.0, 110.0, 16.0, 110.0),
+                  itemCount: _weeklyData.length + 1, 
+                  itemBuilder: (context, index) {
+                    if (index == 0) return _buildHeader();
+                    return _buildHistoryCard(_weeklyData[index - 1]);
+                  },
+              ),
+          ),
+        ),
+      ],
+    );
+  }
 
-    List<Map<String, dynamic>> dailySummary = _generateDailySummary();
-
-    return Container(
-      color: const Color(0xFFF1F5F9), // Slightly darker background for contrast
+  Widget _buildHeader() {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 24.0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.fromLTRB(20, 40, 20, 24),
-            color: Colors.white,
-            child: const Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text("7-Day Water Safety", style: TextStyle(fontSize: 28, fontWeight: FontWeight.w900, color: Color(0xFF0F172A))),
-                SizedBox(height: 8),
-                Text("Quick history of water conditions for releases.", style: TextStyle(fontSize: 16, color: Color(0xFF64748B))),
-              ],
-            ),
-          ),
-          
-          Expanded(
-            child: ListView.builder(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
-              itemCount: dailySummary.length,
-              itemBuilder: (context, index) {
-                final day = dailySummary[index];
-                bool isToday = index == 0;
+          const Text("Weekly Trends", style: TextStyle(fontSize: 32, fontWeight: FontWeight.w900, color: Colors.white, shadows: [Shadow(color: Colors.black45, blurRadius: 6, offset: Offset(0, 2))])),
+          const SizedBox(height: 4),
+          Text("Quick history of water conditions for releases.", style: TextStyle(fontSize: 15, color: Colors.white70, shadows: const [Shadow(color: Colors.black45, blurRadius: 6)])),
+        ],
+      ),
+    );
+  }
 
-                return Container(
-                  margin: const EdgeInsets.only(bottom: 16),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(16),
-                    border: Border.all(
-                      color: isToday ? day['color'] : Colors.grey.shade200, 
-                      width: isToday ? 2 : 1
-                    ),
-                    boxShadow: [
-                      BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 8, offset: const Offset(0, 4))
-                    ]
-                  ),
-                  child: Row(
-                    children: [
-                      // Massive Color Indicator Block on the left
-                      Container(
-                        width: 100,
-                        height: 100,
-                        decoration: BoxDecoration(
-                          color: (day['color'] as Color).withOpacity(0.15),
-                          borderRadius: const BorderRadius.only(topLeft: Radius.circular(15), bottomLeft: Radius.circular(15))
-                        ),
-                        child: Center(
-                          child: Icon(day['icon'], color: day['color'], size: 48),
+  Widget _buildHistoryCard(Map<String, dynamic> dayData) {
+    bool hasData = dayData['hasData'];
+    DateTime date = dayData['date'];
+    String dayHeader = _formatDayHeader(date);
+
+    if (!hasData) return _buildNoDataCard(dayHeader);
+
+    Map<String, dynamic> data = dayData['data'];
+    
+    double airTemp = _parseDouble(data['airTemp']);
+    double waterTemp = _parseDouble(data['waterTemp']);
+    double humidity = _parseDouble(data['humidity']);
+    double ph = _parseDouble(data['pH']);
+    double turbidity = _parseDouble(data['turbidity']);
+
+    String airStatus = SensorConstants.getStatus('airTemp', airTemp);
+    String waterStatus = SensorConstants.getStatus('waterTemp', waterTemp);
+    String humStatus = SensorConstants.getStatus('humidity', humidity);
+    String phStatus = SensorConstants.getStatus('ph', ph);
+    String turbStatus = SensorConstants.getStatus('turbidity', turbidity);
+
+    Map<String, dynamic> assessment = SensorConstants.calculateOverallReleaseStatus([
+      airStatus, waterStatus, humStatus, phStatus, turbStatus
+    ]);
+
+    Color statusColor = _getStrictStatusColor(assessment['status']);
+    IconData statusIcon = Icons.check_circle;
+    String cardBgImage = 'assets/images/bg_safe.jpg';
+    
+    if (statusColor == const Color(0xFFEF4444)) {
+      statusIcon = Icons.block;
+      cardBgImage = 'assets/images/bg_danger.png';
+    } else if (statusColor == const Color(0xFFF59E0B)) {
+      statusIcon = Icons.warning_amber_rounded;
+      cardBgImage = 'assets/images/bg_caution.png';
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16.0),
+      decoration: BoxDecoration(borderRadius: BorderRadius.circular(20), boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 8, offset: Offset(0, 4))]),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(20),
+        child: Container(
+          decoration: BoxDecoration(
+            image: DecorationImage(image: AssetImage(cardBgImage), fit: BoxFit.cover),
+          ),
+          child: BackdropFilter(
+            filter: ImageFilter.blur(sigmaX: 4, sigmaY: 4), 
+            child: Container(
+              decoration: BoxDecoration(
+                color: Colors.black.withOpacity(0.55), 
+                border: Border.all(color: statusColor.withOpacity(0.6), width: 2.0),
+                borderRadius: BorderRadius.circular(20),
+              ),
+              child: IntrinsicHeight(
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Container(
+                      width: 70,
+                      decoration: BoxDecoration(
+                        color: statusColor.withOpacity(0.2),
+                        border: Border(right: BorderSide(color: statusColor.withOpacity(0.5), width: 1)),
+                      ),
+                      child: Center(
+                        child: Container(
+                          padding: const EdgeInsets.all(8),
+                          decoration: BoxDecoration(
+                            color: statusColor.withOpacity(0.3),
+                            shape: BoxShape.circle,
+                            boxShadow: [BoxShadow(color: statusColor.withOpacity(0.5), blurRadius: 12)]
+                          ),
+                          child: Icon(statusIcon, color: Colors.white, size: 28),
                         ),
                       ),
-                      
-                      const SizedBox(width: 20),
-                      
-                      // Simple text information
-                      Expanded(
+                    ),
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.all(16.0),
                         child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
-                          mainAxisAlignment: MainAxisAlignment.center,
                           children: [
-                            Text(
-                              day['dateLabel'], 
-                              style: TextStyle(
-                                fontSize: isToday ? 18 : 14, 
-                                fontWeight: FontWeight.w900, 
-                                color: isToday ? const Color(0xFF0F172A) : const Color(0xFF64748B),
-                                letterSpacing: 1
-                              )
-                            ),
+                            Text(dayHeader, style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: Colors.white70, letterSpacing: 1.0)),
                             const SizedBox(height: 4),
                             Text(
-                              day['statusText'], 
-                              style: TextStyle(
-                                fontSize: 18, 
-                                fontWeight: FontWeight.w900, 
-                                color: day['color']
-                              )
+                              assessment['status'].toString().replaceAll('NO-GO:', '').trim(), 
+                              style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: statusColor, shadows: const [Shadow(color: Colors.black, blurRadius: 4)])
                             ),
+                            const SizedBox(height: 12),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                _buildMiniSensor(Icons.thermostat, waterTemp, '°C', _getStrictStatusColor(waterStatus)),
+                                _buildMiniSensor(Icons.science, ph, 'pH', _getStrictStatusColor(phStatus)),
+                                _buildMiniSensor(Icons.visibility, turbidity, 'NTU', _getStrictStatusColor(turbStatus)),
+                              ],
+                            )
                           ],
                         ),
                       ),
-                    ],
-                  ),
-                );
-              },
+                    )
+                  ],
+                ),
+              ),
             ),
           ),
-        ],
+        ),
       ),
+    );
+  }
+
+  Widget _buildNoDataCard(String dayHeader) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16.0),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(20),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+          child: Container(
+            padding: const EdgeInsets.all(20),
+            decoration: BoxDecoration(
+              color: Colors.black.withOpacity(0.4),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: Colors.white.withOpacity(0.15), width: 1.5),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.help_outline, color: Colors.white.withOpacity(0.4), size: 36),
+                const SizedBox(width: 20),
+                Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(dayHeader, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: Colors.white.withOpacity(0.6), letterSpacing: 1.0)),
+                    const SizedBox(height: 4),
+                    Text("NO DATA", style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: Colors.white.withOpacity(0.4))),
+                  ],
+                )
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildMiniSensor(IconData icon, double value, String unit, Color statusColor) {
+    return Row(
+      children: [
+        Icon(icon, color: statusColor, size: 16),
+        const SizedBox(width: 4),
+        Text("${value.toStringAsFixed(1)}$unit", style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold, shadows: [Shadow(color: Colors.black54, blurRadius: 2)])),
+      ],
     );
   }
 }

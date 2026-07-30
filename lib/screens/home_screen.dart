@@ -1,8 +1,12 @@
 import 'package:flutter/material.dart';
 import 'dart:ui';
 
+// Make sure these match your exact file names in the lib/screens folder
 import 'dashboard_screen.dart'; 
 import 'trends_tab.dart'; 
+import 'alerts_tab.dart';
+import 'environmental_data_tab.dart';
+import 'profile_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -14,23 +18,23 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   int _currentIndex = 0;
 
+  // FIXED: No more text placeholders. This now loads your actual custom screens.
   final List<Widget> _tabs = [
     const DashboardTab(),
     const TrendsTab(),
-    const Center(child: Text("Alerts", style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold))), 
-    const Center(child: Text("Eco Data", style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold))), 
-    const Center(child: Text("Profile", style: TextStyle(color: Colors.white, fontSize: 24, fontWeight: FontWeight.bold))), 
+    const AlertsTab(), 
+    const EnvironmentalDataTab(), 
+    const ProfileScreen(), 
   ];
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      // FORCES THE TAB BACKGROUNDS TO EXPAND BEHIND THE HEADER AND NAVIGATION SLIDERS
       extendBodyBehindAppBar: true,
       extendBody: true,
       backgroundColor: const Color(0xFF0F172A), 
       
-      // --- TRANS-GLASS TOP BAR ---
+      // --- FROSTED GLASS TOP BAR ---
       appBar: AppBar(
         backgroundColor: Colors.black.withOpacity(0.35), 
         elevation: 0,
@@ -52,9 +56,10 @@ class _HomeScreenState extends State<HomeScreen> {
         ),
       ),
       
+      // Render the actively selected tab
       body: _tabs[_currentIndex],
       
-      // --- TRANS-GLASS BOTTOM NAVIGATION SLIDER ---
+      // --- FROSTED GLASS BOTTOM NAVIGATION BAR ---
       bottomNavigationBar: ClipRRect(
         child: BackdropFilter(
           filter: ImageFilter.blur(sigmaX: 20, sigmaY: 20),
@@ -64,7 +69,7 @@ class _HomeScreenState extends State<HomeScreen> {
               border: Border(top: BorderSide(color: Colors.white.withOpacity(0.18), width: 1)),
             ),
             child: BottomNavigationBar(
-              backgroundColor: Colors.transparent, // Required to make glass blurring function
+              backgroundColor: Colors.transparent, 
               elevation: 0,
               type: BottomNavigationBarType.fixed, 
               currentIndex: _currentIndex,
@@ -74,11 +79,11 @@ class _HomeScreenState extends State<HomeScreen> {
               selectedLabelStyle: const TextStyle(fontWeight: FontWeight.bold, fontSize: 12),
               unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.normal, fontSize: 11),
               items: const [
-                BottomNavigationBarItem(icon: Icon(Icons.dashboard), label: 'Dashboard'),
-                BottomNavigationBarItem(icon: Icon(Icons.insert_chart_outlined), label: 'Trends'),
-                BottomNavigationBarItem(icon: Icon(Icons.notifications_none), label: 'Alerts'),
-                BottomNavigationBarItem(icon: Icon(Icons.eco_outlined), label: 'Eco Data'),
-                BottomNavigationBarItem(icon: Icon(Icons.person_outline), label: 'Profile'),
+                BottomNavigationBarItem(icon: Icon(Icons.dashboard_outlined), activeIcon: Icon(Icons.dashboard), label: 'Dashboard'),
+                BottomNavigationBarItem(icon: Icon(Icons.insert_chart_outlined), activeIcon: Icon(Icons.insert_chart), label: 'Trends'),
+                BottomNavigationBarItem(icon: Icon(Icons.notifications_none), activeIcon: Icon(Icons.notifications), label: 'Alerts'),
+                BottomNavigationBarItem(icon: Icon(Icons.eco_outlined), activeIcon: Icon(Icons.eco), label: 'Eco Data'),
+                BottomNavigationBarItem(icon: Icon(Icons.person_outline), activeIcon: Icon(Icons.person), label: 'Profile'),
               ],
             ),
           ),

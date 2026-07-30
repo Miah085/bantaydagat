@@ -3,9 +3,10 @@ import 'package:firebase_database/firebase_database.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:intl/intl.dart';
 import 'dart:async';
+import 'dart:ui';
 import 'package:flutter/services.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:flutter_ringtone_player/flutter_ringtone_player.dart'; // NEW: The loud alarm package
+import 'package:flutter_ringtone_player/flutter_ringtone_player.dart';
 
 import '../config/sensor_constants.dart';
 
@@ -19,20 +20,25 @@ class AlertsTab extends StatefulWidget {
 class _AlertsTabState extends State<AlertsTab> {
   bool _isLoading = true;
   List<Map<String, dynamic>> _alertsFeed = [];
-  final String databaseUrl = "https://bantaydagat-default-rtdb.firebaseio.com/";
+  String _mainBgImagePath = 'assets/images/bg_safe.jpg';
+  int _activeCriticalCount = 0;
   
+  final String databaseUrl = "https://bantaydagat-default-rtdb.firebaseio.com/";
   StreamSubscription<DatabaseEvent>? _alertsSubscription;
+  StreamSubscription<DatabaseEvent>? _liveSubscription; 
   String? _lastAlertId;
 
   @override
   void initState() {
     super.initState();
+    _setupRealtimeBackgroundSync();
     _setupIncidentStream();
   }
 
   @override
   void dispose() {
     _alertsSubscription?.cancel();
+    _liveSubscription?.cancel();
     super.dispose();
   }
 
@@ -43,16 +49,52 @@ class _AlertsTabState extends State<AlertsTab> {
     return double.tryParse(value.toString()) ?? 0.0;
   }
 
+  void _setupRealtimeBackgroundSync() {
+    final db = FirebaseDatabase.instanceFor(app: Firebase.app(), databaseURL: databaseUrl);
+    _liveSubscription = db.ref('bantaydagat/latest').onValue.listen((event) {
+      if (event.snapshot.value != null && mounted) {
+        final data = Map<String, dynamic>.from(event.snapshot.value as Map);
+        
+        double airTemp = _parseDouble(data['airTemp']);
+        double waterTemp = _parseDouble(data['waterTemp']);
+        double humidity = _parseDouble(data['humidity']);
+        double ph = _parseDouble(data['pH']);
+        double turbidity = _parseDouble(data['turbidity']);
+
+        String airStatus = SensorConstants.getStatus('airTemp', airTemp);
+        String waterStatus = SensorConstants.getStatus('waterTemp', waterTemp);
+        String humStatus = SensorConstants.getStatus('humidity', humidity);
+        String phStatus = SensorConstants.getStatus('ph', ph);
+        String turbStatus = SensorConstants.getStatus('turbidity', turbidity);
+
+        Map<String, dynamic> assessment = SensorConstants.calculateOverallReleaseStatus([
+          airStatus, waterStatus, humStatus, phStatus, turbStatus
+        ]);
+        
+        Color statusColor = _getStrictStatusColor(assessment['status'].toString());
+        String newBg = 'assets/images/bg_safe.jpg';
+        
+        if (statusColor == const Color(0xFFEF4444)) {
+          newBg = 'assets/images/bg_danger.png';
+        } else if (statusColor == const Color(0xFFF59E0B)) {
+          newBg = 'assets/images/bg_caution.png';
+        }
+
+        setState(() {
+          _mainBgImagePath = newBg;
+        });
+      }
+    });
+  }
+
   void _setupIncidentStream() {
     final db = FirebaseDatabase.instanceFor(app: Firebase.app(), databaseURL: databaseUrl);
     
-    // Listen to the last 100 logs to build a solid history of events
     _alertsSubscription = db.ref('bantaydagat/readings').limitToLast(100).onValue.listen((event) {
       if (event.snapshot.value != null && mounted) {
         final Map<dynamic, dynamic> rawData = event.snapshot.value as Map<dynamic, dynamic>;
         List<Map<String, dynamic>> sortedLogs = rawData.entries.map((e) => Map<String, dynamic>.from(e.value as Map)).toList();
         
-        // Sort chronologically so we can trace when things broke and when they fixed
         sortedLogs.sort((a, b) {
           int tsA = int.tryParse(a['timestamp']?.toString() ?? '0') ?? 0;
           int tsB = int.tryParse(b['timestamp']?.toString() ?? '0') ?? 0;
@@ -60,62 +102,66 @@ class _AlertsTabState extends State<AlertsTab> {
         });
 
         List<Map<String, dynamic>> newFeed = _generateEventFeed(sortedLogs);
-        
-        // --- THE PROFILE-CONNECTED ALARM LOGIC ---
+        int criticals = newFeed.where((item) => item['badgeText'] == 'CRITICAL').length;
+
         if (newFeed.isNotEmpty) {
           var newestAlert = newFeed.first; 
           String topId = "${newestAlert['time']}_${newestAlert['title']}";
           
-          if (_lastAlertId != null && _lastAlertId != topId && newestAlert['isPositive'] == false) {
-             _triggerLoudAlarm(newestAlert);
+          if (_lastAlertId != null && _lastAlertId != topId) {
+             _triggerDynamicSoundAlert(newestAlert);
           }
           _lastAlertId = topId;
         }
 
         setState(() {
           _alertsFeed = newFeed;
+          _activeCriticalCount = criticals;
           _isLoading = false;
         });
       }
     });
   }
 
-  void _triggerLoudAlarm(Map<String, dynamic> alert) async {
+  void _triggerDynamicSoundAlert(Map<String, dynamic> alert) async {
     final prefs = await SharedPreferences.getInstance();
-    // Connects directly to the toggle in your Profile Tab
     bool soundEnabled = prefs.getBool('sound_alerts') ?? true;
 
     if (soundEnabled) {
-      if (alert['badgeText'] == 'CRITICAL') {
+      String badge = alert['badgeText'];
+      
+      if (badge == 'CRITICAL') {
         HapticFeedback.heavyImpact();
-        // This bypasses silent mode on most phones and plays the loud default alarm clock sound
         FlutterRingtonePlayer().playAlarm(volume: 1.0, looping: false); 
-      } else if (alert['badgeText'] == 'WARNING') {
+      } else if (badge == 'WARNING') {
         HapticFeedback.mediumImpact();
-        // Plays a standard loud notification ping
         FlutterRingtonePlayer().playNotification();
+      } else if (badge == 'RESOLVED') {
+        HapticFeedback.lightImpact();
+        FlutterRingtonePlayer().play(
+          android: AndroidSounds.notification,
+          ios: IosSounds.glass,
+          looping: false,
+          volume: 0.6,
+        );
       }
     }
   }
 
-  // Analyzes the history and ONLY returns an item when a sensor crosses a boundary
   List<Map<String, dynamic>> _generateEventFeed(List<Map<String, dynamic>> logs) {
     List<Map<String, dynamic>> feed = [];
-    
-    Map<String, String> lastKnownState = {
-      'airTemp': 'SAFE', 'waterTemp': 'SAFE', 'humidity': 'SAFE', 'ph': 'SAFE', 'turbidity': 'SAFE'
-    };
+    Map<String, String> lastKnownState = {'airTemp': 'SAFE', 'waterTemp': 'SAFE', 'humidity': 'SAFE', 'ph': 'SAFE', 'turbidity': 'SAFE'};
 
     for (var log in logs) {
       int ts = int.tryParse(log['timestamp']?.toString() ?? '0') ?? 0;
       if (ts > 0 && ts < 10000000000) ts *= 1000;
       DateTime date = DateTime.fromMillisecondsSinceEpoch(ts);
-      String timeStr = DateFormat('MMM d, yyyy • h:mm a').format(date);
+      String timeStr = DateFormat('MMM d • h:mm a').format(date);
 
-      double air = _parseDouble(log['air_temperature'] ?? log['airTemp']);
-      double water = _parseDouble(log['temperature'] ?? log['waterTemp']);
+      double air = _parseDouble(log['airTemp']);
+      double water = _parseDouble(log['waterTemp']);
       double hum = _parseDouble(log['humidity']);
-      double ph = _parseDouble(log['ph'] ?? log['pH']);
+      double ph = _parseDouble(log['pH']);
       double turb = _parseDouble(log['turbidity']);
 
       void checkThreshold(String name, String brainKey, double val, String unit) {
@@ -132,37 +178,29 @@ class _AlertsTabState extends State<AlertsTab> {
 
           if (currentState == 'DANGER') {
             title = '$name Critical Breach';
-            message = 'Level spiked to ${val.toStringAsFixed(2)}$unit. Immediate intervention required.';
-            color = const Color(0xFFE11D48); // Rose/Red
+            message = 'Level spiked to ${val.toStringAsFixed(1)}$unit. Release protocol halted.';
+            color = const Color(0xFFEF4444); 
             icon = Icons.warning_amber_rounded;
             badgeText = 'CRITICAL';
             isPositive = false;
           } else if (currentState == 'CAUTION') {
             title = '$name Warning';
-            message = 'Level shifted to ${val.toStringAsFixed(2)}$unit. Monitor closely.';
-            color = const Color(0xFFD97706); // Amber/Orange
+            message = 'Level shifted to ${val.toStringAsFixed(1)}$unit. Visual inspection required.';
+            color = const Color(0xFFF59E0B); 
             icon = Icons.error_outline;
             badgeText = 'WARNING';
             isPositive = false;
           } else if (currentState == 'SAFE' && (prevState == 'DANGER' || prevState == 'CAUTION')) {
             title = '$name Stabilized';
-            message = 'Returned to safe baseline (${val.toStringAsFixed(2)}$unit).';
-            color = const Color(0xFF059669); // Emerald/Green
+            message = 'Returned to safe baseline (${val.toStringAsFixed(1)}$unit). Sanctuary secure.';
+            color = const Color(0xFF10B981); 
             icon = Icons.check_circle_outline;
             badgeText = 'RESOLVED';
             isPositive = true;
           }
 
           if (title.isNotEmpty) {
-            feed.add({
-              'title': title,
-              'message': message,
-              'time': timeStr,
-              'color': color,
-              'icon': icon,
-              'badgeText': badgeText,
-              'isPositive': isPositive 
-            });
+            feed.add({'title': title, 'message': message, 'time': timeStr, 'color': color, 'icon': icon, 'badgeText': badgeText, 'isPositive': isPositive});
           }
           lastKnownState[brainKey] = currentState;
         }
@@ -175,134 +213,174 @@ class _AlertsTabState extends State<AlertsTab> {
       checkThreshold('Turbidity', 'turbidity', turb, ' NTU');
     }
 
-    // Add a connection event at the very beginning of the timeline
     feed.insert(0, {
-      'title': 'System Stream Initiated', 
-      'message': 'Connected to live database. Listening for anomalies.', 
-      'time': DateFormat('MMM d, yyyy • h:mm a').format(DateTime.now()), 
+      'title': 'Tactical Telemetry Online', 
+      'message': 'Naic coastal monitoring sensors linked successfully.', 
+      'time': DateFormat('MMM d • h:mm a').format(DateTime.now()), 
       'color': const Color(0xFF3B82F6), 
-      'icon': Icons.wifi_tethering,
+      'icon': Icons.security,
       'badgeText': 'SYSTEM',
       'isPositive': true
     });
 
-    // Reverse it so the newest event is at the top
     return feed.reversed.toList();
+  }
+
+  Color _getStrictStatusColor(String status) {
+    String s = status.toUpperCase();
+    if (s.contains('SAFE') || s == 'GO') return const Color(0xFF10B981); 
+    if (s.contains('CAUTION') || s.contains('WARNING')) return const Color(0xFFF59E0B); 
+    if (s.contains('DANGER') || s.contains('NO-GO')) return const Color(0xFFEF4444); 
+    return const Color(0xFF94A3B8); 
   }
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      color: const Color(0xFFF1F5F9), // Different background color from Dashboard to emphasize separation
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Header Section
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.fromLTRB(24, 40, 24, 24),
-            decoration: const BoxDecoration(
-              color: Colors.white,
-              border: Border(bottom: BorderSide(color: Color(0xFFE2E8F0))),
+    return Stack(
+      children: [
+        RepaintBoundary(
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 800),
+            transitionBuilder: (child, animation) => FadeTransition(opacity: animation, child: child),
+            child: Container(
+              key: ValueKey<String>(_mainBgImagePath),
+              width: double.infinity,
+              height: double.infinity,
+              decoration: BoxDecoration(
+                color: const Color(0xFF0F172A),
+                image: _isLoading 
+                  ? null 
+                  : DecorationImage(
+                      image: AssetImage(_mainBgImagePath),
+                      fit: BoxFit.cover,
+                      colorFilter: ColorFilter.mode(Colors.black.withOpacity(0.35), BlendMode.darken),
+                    ),
+              ),
             ),
+          ),
+        ),
+        
+        RepaintBoundary(
+          child: SizedBox(
+            width: double.infinity,
+            height: double.infinity,
+            child: _isLoading 
+              ? const Center(child: CircularProgressIndicator(color: Colors.white))
+              : ListView.builder(
+                  padding: const EdgeInsets.fromLTRB(16.0, 120.0, 16.0, 120.0),
+                  itemCount: _alertsFeed.length + 1,
+                  itemBuilder: (context, index) {
+                    if (index == 0) return _buildTacticalHeader();
+                    return _buildTacticalIncidentCard(_alertsFeed[index - 1]);
+                  },
+                ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildTacticalHeader() {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 24.0),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          // FIX: Wrapped header text in Expanded so it never pushes the Threat Badge off screen
+          const Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                const Text("Notification Center", style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: Color(0xFF0F172A))),
-                const SizedBox(height: 4),
-                Text("Chronological log of environmental triggers.", style: TextStyle(fontSize: 14, color: Colors.blueGrey.shade400)),
+                Text("Incident Feed", style: TextStyle(fontSize: 28, fontWeight: FontWeight.w900, color: Colors.white, shadows: [Shadow(color: Colors.black45, blurRadius: 6, offset: Offset(0, 2))])),
+                SizedBox(height: 4),
+                // FIX: Shortened description text to prevent overcrowding
+                Text("Coastal Security Log", style: TextStyle(fontSize: 14, color: Colors.white70, shadows: [Shadow(color: Colors.black45, blurRadius: 6)])),
               ],
             ),
           ),
-          
-          // Feed Section
-          Expanded(
-            child: _isLoading 
-                ? const Center(child: CircularProgressIndicator(color: Color(0xFF0F82A0)))
-                : _alertsFeed.isEmpty 
-                    ? const Center(child: Text("No events recorded.", style: TextStyle(color: Colors.grey)))
-                    : ListView.builder(
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
-                        itemCount: _alertsFeed.length,
-                        itemBuilder: (context, index) {
-                          return _buildNotificationInboxItem(_alertsFeed[index]);
-                        },
-                      ),
-          ),
+          const SizedBox(width: 12),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+            decoration: BoxDecoration(
+              color: _activeCriticalCount > 0 ? const Color(0xFFEF4444).withOpacity(0.85) : const Color(0xFF10B981).withOpacity(0.85),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: Colors.white30),
+              boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 6)]
+            ),
+            child: Row(
+              children: [
+                Icon(_activeCriticalCount > 0 ? Icons.warning_rounded : Icons.verified_user, size: 14, color: Colors.white),
+                const SizedBox(width: 6),
+                Text(
+                  _activeCriticalCount > 0 ? "$_activeCriticalCount THREATS" : "SECURE", 
+                  style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w900, color: Colors.white, letterSpacing: 0.5)
+                ),
+              ],
+            ),
+          )
         ],
       ),
     );
   }
 
-  // Looks like an iOS/Android push notification inbox item
-  Widget _buildNotificationInboxItem(Map<String, dynamic> alert) {
+  Widget _buildTacticalIncidentCard(Map<String, dynamic> alert) {
     bool isCritical = alert['badgeText'] == 'CRITICAL';
-    
+    Color pillColor = alert['color'];
+
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        // Give critical alerts a faint red border so they pop
-        border: Border.all(color: isCritical ? alert['color'].withOpacity(0.5) : Colors.transparent, width: isCritical ? 1.5 : 0),
-        boxShadow: [
-          BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 6, offset: const Offset(0, 3))
-        ]
-      ),
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Icon Pill
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                color: alert['color'].withOpacity(0.1),
-                shape: BoxShape.circle,
-              ),
-              child: Icon(alert['icon'], color: alert['color'], size: 22),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+          child: Container(
+            decoration: BoxDecoration(
+              color: Colors.black.withOpacity(0.55),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: isCritical ? pillColor : Colors.white.withOpacity(0.2), width: isCritical ? 2.0 : 1.2),
             ),
-            const SizedBox(width: 16),
-            
-            // Content
-            Expanded(
-              child: Column(
+            child: Padding(
+              padding: const EdgeInsets.all(16.0),
+              child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Expanded(
-                        child: Text(
-                          alert['title'],
-                          style: TextStyle(
-                            fontSize: 15, 
-                            fontWeight: FontWeight.bold, 
-                            color: isCritical ? alert['color'] : const Color(0xFF0F172A)
-                          ),
+                  Container(
+                    padding: const EdgeInsets.all(10),
+                    decoration: BoxDecoration(color: pillColor.withOpacity(0.25), shape: BoxShape.circle, border: Border.all(color: pillColor.withOpacity(0.5))),
+                    child: Icon(alert['icon'], color: pillColor, size: 22),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Expanded(
+                              child: Text(alert['title'], style: TextStyle(fontSize: 15, fontWeight: FontWeight.w900, color: isCritical ? pillColor : Colors.white, shadows: const [Shadow(color: Colors.black54, blurRadius: 4)])),
+                            ),
+                            // FIX: Added horizontal spacing buffer to prevent badge from touching the text
+                            const SizedBox(width: 12),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                              decoration: BoxDecoration(color: pillColor.withOpacity(0.25), borderRadius: BorderRadius.circular(8), border: Border.all(color: pillColor.withOpacity(0.6))),
+                              child: Text(alert['badgeText'], style: TextStyle(fontSize: 9, fontWeight: FontWeight.w900, color: pillColor, letterSpacing: 0.8)),
+                            ),
+                          ],
                         ),
-                      ),
-                      Text(
-                        alert['badgeText'],
-                        style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, color: alert['color'], letterSpacing: 0.5),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    alert['message'],
-                    style: const TextStyle(fontSize: 13, color: Color(0xFF475569), height: 1.4),
-                  ),
-                  const SizedBox(height: 8),
-                  Text(
-                    alert['time'],
-                    style: const TextStyle(fontSize: 11, color: Color(0xFF94A3B8), fontWeight: FontWeight.w500),
+                        const SizedBox(height: 6),
+                        Text(alert['message'], style: const TextStyle(fontSize: 13, color: Colors.white70, height: 1.4, shadows: [Shadow(color: Colors.black45, blurRadius: 2)])),
+                        const SizedBox(height: 8),
+                        Text(alert['time'], style: TextStyle(fontSize: 11, color: Colors.white.withOpacity(0.5), fontWeight: FontWeight.w600)),
+                      ],
+                    ),
                   ),
                 ],
               ),
             ),
-          ],
+          ),
         ),
       ),
     );

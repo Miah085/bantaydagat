@@ -44,15 +44,11 @@ class _DashboardTabState extends State<DashboardTab> {
 
   void _setupRealtimeStream() {
     final db = FirebaseDatabase.instanceFor(app: Firebase.app(), databaseURL: databaseUrl);
-    // LOGIC FIX: Forced orderByChild('timestamp') to ensure exact sync with web dashboard.
-    _liveSubscription = db.ref('bantaydagat/readings')
-        .orderByChild('timestamp')
-        .limitToLast(1)
-        .onValue.listen((event) {
+    
+    _liveSubscription = db.ref('bantaydagat/latest').onValue.listen((event) {
       if (event.snapshot.value != null && mounted) {
-        final Map rawWrapper = event.snapshot.value as Map;
         setState(() {
-          _latestData = Map<String, dynamic>.from(rawWrapper.values.first as Map);
+          _latestData = Map<String, dynamic>.from(event.snapshot.value as Map);
           _isLoading = false;
         });
       }
@@ -67,19 +63,18 @@ class _DashboardTabState extends State<DashboardTab> {
     return const Color(0xFF94A3B8); 
   }
 
-  // --- GLASSMORPHISM CARD BUILDER ---
-  Widget _buildGlassCard({required Widget child, Color? borderColor}) {
+  Widget _buildGlassCard({required Widget child, Color? borderColor, double borderWidth = 1.5}) {
     return ClipRRect(
-      borderRadius: BorderRadius.circular(16),
+      borderRadius: BorderRadius.circular(20),
       child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+        filter: ImageFilter.blur(sigmaX: 16, sigmaY: 16),
         child: Container(
           decoration: BoxDecoration(
-            color: Colors.black.withOpacity(0.5), // Stronger dark tint to guarantee text visibility
-            borderRadius: BorderRadius.circular(16),
+            color: Colors.black.withOpacity(0.55), 
+            borderRadius: BorderRadius.circular(20),
             border: Border.all(
-              color: borderColor ?? Colors.white.withOpacity(0.2), 
-              width: 1.5
+              color: borderColor ?? Colors.white.withOpacity(0.25), 
+              width: borderWidth
             ),
           ),
           child: child,
@@ -94,11 +89,10 @@ class _DashboardTabState extends State<DashboardTab> {
       return const Center(child: CircularProgressIndicator(color: Colors.white));
     }
 
-    // LOGIC FIX: Removed the fake 7.8 fallback. If sensor breaks, it reads 0.0 and correctly flags DANGER.
-    double airTemp = _parseDouble(_latestData['air_temperature'] ?? _latestData['airTemp']);
-    double waterTemp = _parseDouble(_latestData['temperature'] ?? _latestData['waterTemp']);
+    double airTemp = _parseDouble(_latestData['airTemp']);
+    double waterTemp = _parseDouble(_latestData['waterTemp']);
     double humidity = _parseDouble(_latestData['humidity']);
-    double ph = _parseDouble(_latestData['ph'] ?? _latestData['pH']); 
+    double ph = _parseDouble(_latestData['pH']); 
     double turbidity = _parseDouble(_latestData['turbidity']);
 
     String airStatus = SensorConstants.getStatus('airTemp', airTemp);
@@ -127,54 +121,73 @@ class _DashboardTabState extends State<DashboardTab> {
       turtleImagePath = 'assets/images/turtle_caution.png'; 
     }
 
-    return Container(
-      width: double.infinity,
-      height: double.infinity,
-      decoration: BoxDecoration(
-        color: const Color(0xFF0F172A),
-        image: DecorationImage(
-          image: AssetImage(bgImagePath),
-          fit: BoxFit.cover,
-          colorFilter: ColorFilter.mode(Colors.black.withOpacity(0.2), BlendMode.darken),
-        ),
-      ),
-      // We do NOT use SafeArea here so the background stretches fully behind the transparent app bar
-      child: SingleChildScrollView(
-        // Massive padding at the top and bottom clears the custom App Bar and Bottom Nav
-        padding: const EdgeInsets.fromLTRB(16.0, 120.0, 16.0, 120.0), 
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.center,
-          children: [
-            _buildPageHeader(),
-            const SizedBox(height: 40),
-            
-            _buildFloatingTurtleStatus(mainStatusColor, actionText, assessment['message'], turtleImagePath),
-            const SizedBox(height: 40),
-            
-            const WeatherSummaryCard(),
-            const SizedBox(height: 24),
-            
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Text('LIVE SENSOR CHECK', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: Colors.white.withOpacity(0.9), letterSpacing: 1)),
-                _buildHelpGuideButton(),
-              ],
+    return Stack(
+      children: [
+        // THE FIX: RepaintBoundary completely stops the background from recalculating
+        RepaintBoundary(
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 800), 
+            transitionBuilder: (child, animation) => FadeTransition(opacity: animation, child: child),
+            child: Container(
+              key: ValueKey<String>(bgImagePath), 
+              width: double.infinity,
+              height: double.infinity,
+              decoration: BoxDecoration(
+                color: const Color(0xFF0F172A),
+                image: DecorationImage(
+                  image: AssetImage(bgImagePath),
+                  fit: BoxFit.cover,
+                  colorFilter: ColorFilter.mode(Colors.black.withOpacity(0.15), BlendMode.darken),
+                ),
+              ),
             ),
-            const SizedBox(height: 16),
-            
-            _buildVisualSensorGrid(
-              airTemp: airTemp, airStatus: airStatus,
-              waterTemp: waterTemp, waterStatus: waterStatus,
-              humidity: humidity, humStatus: humStatus,
-              ph: ph, phStatus: phStatus,
-              turbidity: turbidity, turbStatus: turbStatus,
-            ),
-          ],
+          ),
         ),
-      ),
+        
+        // THE FIX: RepaintBoundary stops the scroll view from dropping frames
+        RepaintBoundary(
+          child: SizedBox(
+            width: double.infinity,
+            height: double.infinity,
+            child: LayoutBuilder(
+              builder: (context, constraints) {
+                return SingleChildScrollView(
+                  padding: const EdgeInsets.fromLTRB(16.0, 110.0, 16.0, 110.0), 
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.center,
+                    children: [
+                      _buildPageHeader(),
+                      const SizedBox(height: 32),
+                      _buildFloatingTurtleStatus(mainStatusColor, actionText, assessment['message'], turtleImagePath),
+                      const SizedBox(height: 36),
+                      const WeatherSummaryCard(),
+                      const SizedBox(height: 28),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          const Text('LIVE SENSOR CHECK', style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: Colors.white60, letterSpacing: 1.2)),
+                          _buildHelpGuideButton(),
+                        ],
+                      ),
+                      const SizedBox(height: 16),
+                      _buildResponsiveBubbleCluster(
+                        maxWidth: constraints.maxWidth,
+                        airTemp: airTemp, airStatus: airStatus,
+                        waterTemp: waterTemp, waterStatus: waterStatus,
+                        humidity: humidity, humStatus: humStatus,
+                        ph: ph, phStatus: phStatus,
+                        turbidity: turbidity, turbStatus: turbStatus,
+                      ),
+                    ],
+                  ),
+                );
+              }
+            ),
+          ),
+        ),
+      ],
     );
-  }
+  }      
 
   Widget _buildPageHeader() {
     return Row(
@@ -184,22 +197,22 @@ class _DashboardTabState extends State<DashboardTab> {
         Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text("Live Tracker", style: TextStyle(fontSize: 32, fontWeight: FontWeight.w900, color: Colors.white, shadows: [Shadow(color: Colors.black, blurRadius: 10)])),
+            const Text("Live Tracker", style: TextStyle(fontSize: 28, fontWeight: FontWeight.w900, color: Colors.white, shadows: [Shadow(color: Colors.black45, blurRadius: 6, offset: Offset(0, 2))])),
             const SizedBox(height: 4),
-            Text("Current sea conditions in Naic.", style: TextStyle(fontSize: 15, color: Colors.white.withOpacity(0.95), shadows: const [Shadow(color: Colors.black87, blurRadius: 8)])),
+            Text("Current sea conditions in Naic.", style: TextStyle(fontSize: 14, color: Colors.white70, shadows: [Shadow(color: Colors.black45, blurRadius: 6)])),
           ],
         ),
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
           decoration: BoxDecoration(
-            color: Colors.black.withOpacity(0.6), 
+            color: Colors.black.withOpacity(0.5), 
             borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: const Color(0xFFEF4444).withOpacity(0.8))
+            border: Border.all(color: const Color(0xFFEF4444).withOpacity(0.6), width: 1.5)
           ),
           child: const Row(children: [
             Icon(Icons.fiber_manual_record, size: 10, color: Color(0xFFEF4444)),
             SizedBox(width: 6),
-            Text('LIVE', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
+            Text('LIVE', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.white, letterSpacing: 0.5)),
           ]),
         )
       ],
@@ -209,24 +222,16 @@ class _DashboardTabState extends State<DashboardTab> {
   Widget _buildHelpGuideButton() {
     return InkWell(
       onTap: () => _showConciseGuide(context),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(12),
-        child: BackdropFilter(
-          filter: ImageFilter.blur(sigmaX: 8, sigmaY: 8),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            decoration: BoxDecoration(
-              color: Colors.black.withOpacity(0.4), 
-              borderRadius: BorderRadius.circular(12), 
-              border: Border.all(color: Colors.white30)
-            ),
-            child: const Row(
-              children: [
-                Icon(Icons.help_outline, size: 16, color: Colors.white),
-                SizedBox(width: 6),
-                Text("Help Guide", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
-              ],
-            ),
+      child: _buildGlassCard(
+        borderColor: Colors.white.withOpacity(0.2),
+        child: const Padding(
+          padding: EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          child: Row(
+            children: [
+              Icon(Icons.help_outline, size: 16, color: Colors.white),
+              SizedBox(width: 6),
+              Text("Help Guide", style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white)),
+            ],
           ),
         ),
       ),
@@ -236,49 +241,62 @@ class _DashboardTabState extends State<DashboardTab> {
   Widget _buildFloatingTurtleStatus(Color statusColor, String title, String subtitle, String turtleImagePath) {
     return Column(
       children: [
-        Container(
+        AnimatedContainer(
+          duration: const Duration(milliseconds: 600),
           decoration: BoxDecoration(
             shape: BoxShape.circle,
             boxShadow: [
               BoxShadow(
-                color: statusColor.withOpacity(0.5), 
+                color: statusColor.withOpacity(0.45), 
                 blurRadius: 60, 
-                spreadRadius: 5
+                spreadRadius: 8
               )
             ]
           ),
-          child: Image.asset(
-            turtleImagePath,
-            height: 180, // Made the turtle larger and more prominent
-            fit: BoxFit.contain,
+          child: AnimatedSwitcher(
+            duration: const Duration(milliseconds: 500),
+            transitionBuilder: (child, animation) {
+              return FadeTransition(
+                opacity: animation,
+                child: ScaleTransition(
+                  scale: Tween<double>(begin: 0.8, end: 1.0).animate(animation),
+                  child: child,
+                ),
+              );
+            },
+            child: Image.asset(
+              turtleImagePath,
+              key: ValueKey<String>(turtleImagePath), 
+              height: 170,
+              fit: BoxFit.contain,
+            ),
           ),
         ),
-        const SizedBox(height: 24),
-        
-        Text(
-          title, 
-          textAlign: TextAlign.center,
+        const SizedBox(height: 20),
+        AnimatedDefaultTextStyle(
+          duration: const Duration(milliseconds: 400),
           style: TextStyle(
-            fontSize: 38, 
+            fontSize: 36, 
             fontWeight: FontWeight.w900, 
             color: statusColor, 
             height: 1.1, 
-            letterSpacing: 1,
-            shadows: const [Shadow(color: Colors.black, blurRadius: 15, offset: Offset(0, 4))]
+            letterSpacing: 0.5,
+            shadows: const [Shadow(color: Colors.black, blurRadius: 12, offset: Offset(0, 3))]
           ),
+          child: Text(title, textAlign: TextAlign.center),
         ),
-        const SizedBox(height: 12),
-        
+        const SizedBox(height: 10),
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 16.0),
+          padding: const EdgeInsets.symmetric(horizontal: 20.0),
           child: Text(
             subtitle, 
             textAlign: TextAlign.center,
             style: const TextStyle(
-              fontSize: 16, 
+              fontSize: 15, 
               color: Colors.white, 
               fontWeight: FontWeight.w600,
-              shadows: [Shadow(color: Colors.black, blurRadius: 10)]
+              height: 1.3,
+              shadows: [Shadow(color: Colors.black, blurRadius: 8)]
             ),
           ),
         )
@@ -286,85 +304,110 @@ class _DashboardTabState extends State<DashboardTab> {
     );
   }
 
-  Widget _buildVisualSensorGrid({
+  // FIX: This entirely replaces the strict Positioned Stack layout
+  Widget _buildResponsiveBubbleCluster({
+    required double maxWidth,
     required double airTemp, required String airStatus,
     required double waterTemp, required String waterStatus,
     required double humidity, required String humStatus,
     required double ph, required String phStatus,
     required double turbidity, required String turbStatus,
   }) {
-    return GridView(
-      shrinkWrap: true,
-      physics: const NeverScrollableScrollPhysics(),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 2,
-        crossAxisSpacing: 14,
-        mainAxisSpacing: 14,
-        mainAxisExtent: 130, 
-      ),
+    // Calculates proportional bubble sizes based on phone width to prevent overlapping
+    double largeSize = maxWidth * 0.40;
+    double mediumSize = maxWidth * 0.28;
+
+    return Wrap(
+      alignment: WrapAlignment.center,
+      spacing: 12,
+      runSpacing: 16,
       children: [
-        _buildVisualSensorCard(title: 'Air', value: airTemp, unit: '°C', icon: Icons.air, status: airStatus),
-        _buildVisualSensorCard(title: 'Water', value: waterTemp, unit: '°C', icon: Icons.thermostat, status: waterStatus),
-        _buildVisualSensorCard(title: 'Humid', value: humidity, unit: '%', icon: Icons.water_drop, status: humStatus),
-        _buildVisualSensorCard(title: 'pH', value: ph, unit: 'pH', icon: Icons.science, status: phStatus),
-        _buildVisualSensorCard(title: 'Turbid', value: turbidity, unit: 'NTU', icon: Icons.visibility, status: turbStatus),
+        _buildCleanBubble(title: 'Air Temp', value: airTemp, unit: '°C', icon: Icons.air, status: airStatus, size: largeSize),
+        _buildCleanBubble(title: 'Water Temp', value: waterTemp, unit: '°C', icon: Icons.thermostat, status: waterStatus, size: largeSize),
+        _buildCleanBubble(title: 'pH Level', value: ph, unit: 'pH', icon: Icons.science, status: phStatus, size: mediumSize),
+        _buildCleanBubble(title: 'Humidity', value: humidity, unit: '%', icon: Icons.water_drop, status: humStatus, size: mediumSize),
+        _buildCleanBubble(title: 'Turbidity', value: turbidity, unit: 'NTU', icon: Icons.visibility, status: turbStatus, size: mediumSize),
       ],
     );
   }
 
-  Widget _buildVisualSensorCard({required String title, required double value, required String unit, required IconData icon, required String status}) {
+  // FIX: Removed the white glare layer, keeping only clean frosted glass
+  Widget _buildCleanBubble({
+    required String title, required double value, required String unit, 
+    required IconData icon, required String status, required double size
+  }) {
     Color statusColor = _getStrictStatusColor(status);
-    
-    String simpleStatus = "SAFE";
-    if (statusColor == const Color(0xFFEF4444)) simpleStatus = "DANGER";
-    if (statusColor == const Color(0xFFF59E0B)) simpleStatus = "CAUTION";
+    bool isSafe = statusColor == const Color(0xFF10B981);
+    String badgeText = status.toUpperCase().replaceAll('NO-GO', '').replaceAll('(', '').replaceAll(')', '').trim();
 
-    return _buildGlassCard(
-      borderColor: simpleStatus != 'SAFE' ? statusColor : Colors.white.withOpacity(0.3),
-      child: Column(
-        children: [
-          Container(
-            width: double.infinity,
-            padding: const EdgeInsets.symmetric(vertical: 8),
+    return Container(
+      width: size,
+      height: size,
+      decoration: BoxDecoration(
+        shape: BoxShape.circle,
+        boxShadow: [
+          BoxShadow(
+            color: statusColor.withOpacity(isSafe ? 0.2 : 0.4),
+            blurRadius: 20,
+            spreadRadius: 2,
+          )
+        ]
+      ),
+      child: ClipOval(
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+          child: Container(
             decoration: BoxDecoration(
-              color: statusColor.withOpacity(0.85),
-              border: Border(bottom: BorderSide(color: Colors.white.withOpacity(0.2)))
+              shape: BoxShape.circle,
+              color: statusColor.withOpacity(0.12),
+              border: Border.all(
+                color: isSafe ? Colors.white.withOpacity(0.2) : statusColor.withOpacity(0.6),
+                width: 1.5,
+              ),
             ),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(icon, color: Colors.white, size: 14),
-                const SizedBox(width: 6),
-                Text(simpleStatus, style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w900, letterSpacing: 1)),
-              ],
+            child: Center(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Icon(icon, color: isSafe ? Colors.white70 : statusColor, size: size * 0.16),
+                  SizedBox(height: size * 0.02),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    crossAxisAlignment: CrossAxisAlignment.baseline, 
+                    textBaseline: TextBaseline.alphabetic, 
+                    children: [
+                      Text(
+                        value.toStringAsFixed(1), 
+                        style: TextStyle(fontSize: size * 0.23, fontWeight: FontWeight.w900, color: Colors.white, shadows: const [Shadow(color: Colors.black54, blurRadius: 4)])
+                      ),
+                      const SizedBox(width: 2),
+                      Text(
+                        unit, 
+                        style: TextStyle(fontSize: size * 0.10, color: Colors.white70, fontWeight: FontWeight.bold)
+                      ),
+                    ]
+                  ),
+                  Text(title, style: TextStyle(color: Colors.white70, fontSize: size * 0.09, fontWeight: FontWeight.bold, letterSpacing: 0.5)),
+                  
+                  SizedBox(height: size * 0.04),
+                  
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: statusColor.withOpacity(0.9),
+                      borderRadius: BorderRadius.circular(20),
+                      boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4)]
+                    ),
+                    child: Text(
+                      badgeText,
+                      style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w900, letterSpacing: 1.0)
+                    ),
+                  )
+                ],
+              ),
             ),
           ),
-          Expanded(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Row(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  crossAxisAlignment: CrossAxisAlignment.baseline, 
-                  textBaseline: TextBaseline.alphabetic, 
-                  children: [
-                    Text(
-                      value.toStringAsFixed(1), 
-                      style: const TextStyle(fontSize: 32, fontWeight: FontWeight.w900, color: Colors.white, shadows: [Shadow(color: Colors.black87, blurRadius: 4)])
-                    ),
-                    const SizedBox(width: 4),
-                    Text(
-                      unit, 
-                      style: const TextStyle(fontSize: 14, color: Colors.white70, fontWeight: FontWeight.bold)
-                    ),
-                  ]
-                ),
-                const SizedBox(height: 2),
-                Text(title, style: const TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.bold)),
-              ],
-            ),
-          ),
-        ],
+        ),
       ),
     );
   }
@@ -409,11 +452,11 @@ class _DashboardTabState extends State<DashboardTab> {
                   Wrap(
                     spacing: 8, runSpacing: 8,
                     children: [
-                      _buildRangeChip("Air", "25-32°C"),
-                      _buildRangeChip("Water", "26-31°C"),
-                      _buildRangeChip("Hum", "65-85%"),
-                      _buildRangeChip("pH", "7.8-8.3"),
-                      _buildRangeChip("Turb", "< 25 NTU"),
+                      _buildRangeChip("Air Temp", "25-32°C"),
+                      _buildRangeChip("Water Temp", "26-31°C"),
+                      _buildRangeChip("Humidity", "65-85%"),
+                      _buildRangeChip("pH Level", "7.8-8.3"),
+                      _buildRangeChip("Turbidity", "< 25 NTU"),
                     ],
                   ),
                   const SizedBox(height: 32),
@@ -545,13 +588,13 @@ class _WeatherSummaryCardState extends State<WeatherSummaryCard> {
       child: BackdropFilter(
         filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
         child: Container(
-          width: double.infinity, padding: const EdgeInsets.all(20),
+          width: double.infinity, padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
             color: Colors.black.withOpacity(0.5), 
             borderRadius: BorderRadius.circular(16), 
             border: Border.all(color: Colors.white.withOpacity(0.2)),
           ),
-          child: _isLoading ? const Center(child: Padding(padding: EdgeInsets.all(8.0), child: CircularProgressIndicator(color: Colors.white)))
+          child: _isLoading ? const Center(child: Padding(padding: EdgeInsets.all(4.0), child: CircularProgressIndicator(color: Colors.white)))
               : _hasError ? const Text("Weather data unavailable.", style: TextStyle(color: Colors.white70))
               : Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween, 
@@ -559,20 +602,20 @@ class _WeatherSummaryCardState extends State<WeatherSummaryCard> {
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start, 
                       children: [
-                        const Text("Naic, Cavite", style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: Colors.white)), 
-                        const SizedBox(height: 4), 
-                        Text(formattedDate, style: const TextStyle(fontSize: 14, color: Colors.white70, fontWeight: FontWeight.bold))
+                        const Text("Naic, Cavite", style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900, color: Colors.white)), 
+                        const SizedBox(height: 2), 
+                        Text(formattedDate, style: const TextStyle(fontSize: 13, color: Colors.white70, fontWeight: FontWeight.bold))
                       ]
                     ),
                     Row(
                       children: [
-                        const Icon(Icons.cloud, color: Colors.white, size: 36), 
-                        const SizedBox(width: 12), 
+                        const Icon(Icons.cloud, color: Colors.white, size: 32), 
+                        const SizedBox(width: 10), 
                         Column(
                           crossAxisAlignment: CrossAxisAlignment.start, 
                           children: [
-                            Text(_temp, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: Colors.white)), 
-                            Text(_desc, style: const TextStyle(fontSize: 13, color: Colors.white70, fontWeight: FontWeight.bold))
+                            Text(_temp, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: Colors.white)), 
+                            Text(_desc, style: const TextStyle(fontSize: 12, color: Colors.white70, fontWeight: FontWeight.bold))
                           ]
                         )
                       ]

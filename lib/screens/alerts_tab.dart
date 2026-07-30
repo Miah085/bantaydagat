@@ -49,6 +49,18 @@ class _AlertsTabState extends State<AlertsTab> {
     return double.tryParse(value.toString()) ?? 0.0;
   }
 
+  // --- NEW: Pull-to-refresh handler ---
+  Future<void> _handleRefresh() async {
+    // Cancel the existing stream to prevent duplicates
+    await _alertsSubscription?.cancel();
+    
+    // Re-initialize the Firebase data fetch
+    _setupIncidentStream();
+    
+    // Add a slight delay so the refresh animation plays naturally
+    await Future.delayed(const Duration(seconds: 1));
+  }
+
   void _setupRealtimeBackgroundSync() {
     final db = FirebaseDatabase.instanceFor(app: Firebase.app(), databaseURL: databaseUrl);
     _liveSubscription = db.ref('bantaydagat/latest').onValue.listen((event) {
@@ -266,13 +278,21 @@ class _AlertsTabState extends State<AlertsTab> {
             height: double.infinity,
             child: _isLoading 
               ? const Center(child: CircularProgressIndicator(color: Colors.white))
-              : ListView.builder(
-                  padding: const EdgeInsets.fromLTRB(16.0, 120.0, 16.0, 120.0),
-                  itemCount: _alertsFeed.length + 1,
-                  itemBuilder: (context, index) {
-                    if (index == 0) return _buildTacticalHeader();
-                    return _buildTacticalIncidentCard(_alertsFeed[index - 1]);
-                  },
+              // --- NEW: RefreshIndicator wrapping the ListView ---
+              : RefreshIndicator(
+                  onRefresh: _handleRefresh,
+                  color: const Color(0xFF10B981), // Match your safe green theme color
+                  backgroundColor: const Color(0xFF0F172A), // Match the dark background
+                  child: ListView.builder(
+                    // --- NEW: Physics rule allows pull-to-refresh even if the list is short
+                    physics: const AlwaysScrollableScrollPhysics(),
+                    padding: const EdgeInsets.fromLTRB(16.0, 120.0, 16.0, 120.0),
+                    itemCount: _alertsFeed.length + 1,
+                    itemBuilder: (context, index) {
+                      if (index == 0) return _buildTacticalHeader();
+                      return _buildTacticalIncidentCard(_alertsFeed[index - 1]);
+                    },
+                  ),
                 ),
           ),
         ),
@@ -287,14 +307,12 @@ class _AlertsTabState extends State<AlertsTab> {
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
-          // FIX: Wrapped header text in Expanded so it never pushes the Threat Badge off screen
           const Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 Text("Incident Feed", style: TextStyle(fontSize: 28, fontWeight: FontWeight.w900, color: Colors.white, shadows: [Shadow(color: Colors.black45, blurRadius: 6, offset: Offset(0, 2))])),
                 SizedBox(height: 4),
-                // FIX: Shortened description text to prevent overcrowding
                 Text("Coastal Security Log", style: TextStyle(fontSize: 14, color: Colors.white70, shadows: [Shadow(color: Colors.black45, blurRadius: 6)])),
               ],
             ),
@@ -361,7 +379,6 @@ class _AlertsTabState extends State<AlertsTab> {
                             Expanded(
                               child: Text(alert['title'], style: TextStyle(fontSize: 15, fontWeight: FontWeight.w900, color: isCritical ? pillColor : Colors.white, shadows: const [Shadow(color: Colors.black54, blurRadius: 4)])),
                             ),
-                            // FIX: Added horizontal spacing buffer to prevent badge from touching the text
                             const SizedBox(width: 12),
                             Container(
                               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),

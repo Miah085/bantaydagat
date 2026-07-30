@@ -1,3 +1,4 @@
+import 'package:bantaydagat/screens/environmental_data_tab.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_database/firebase_database.dart';
 import 'package:firebase_core/firebase_core.dart';
@@ -8,6 +9,8 @@ import 'dart:ui';
 import 'package:http/http.dart' as http;
 
 import '../config/sensor_constants.dart';
+// Note: Adjust this import path if your eco_data_screen.dart is located elsewhere
+import 'environmental_data_tab.dart'; 
 
 class DashboardTab extends StatefulWidget {
   const DashboardTab({super.key});
@@ -123,7 +126,6 @@ class _DashboardTabState extends State<DashboardTab> {
 
     return Stack(
       children: [
-        // THE FIX: RepaintBoundary completely stops the background from recalculating
         RepaintBoundary(
           child: AnimatedSwitcher(
             duration: const Duration(milliseconds: 800), 
@@ -144,7 +146,6 @@ class _DashboardTabState extends State<DashboardTab> {
           ),
         ),
         
-        // THE FIX: RepaintBoundary stops the scroll view from dropping frames
         RepaintBoundary(
           child: SizedBox(
             width: double.infinity,
@@ -160,7 +161,9 @@ class _DashboardTabState extends State<DashboardTab> {
                       const SizedBox(height: 32),
                       _buildFloatingTurtleStatus(mainStatusColor, actionText, assessment['message'], turtleImagePath),
                       const SizedBox(height: 36),
+                      
                       const WeatherSummaryCard(),
+                      
                       const SizedBox(height: 28),
                       Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -304,7 +307,6 @@ class _DashboardTabState extends State<DashboardTab> {
     );
   }
 
-  // FIX: This entirely replaces the strict Positioned Stack layout
   Widget _buildResponsiveBubbleCluster({
     required double maxWidth,
     required double airTemp, required String airStatus,
@@ -313,7 +315,6 @@ class _DashboardTabState extends State<DashboardTab> {
     required double ph, required String phStatus,
     required double turbidity, required String turbStatus,
   }) {
-    // Calculates proportional bubble sizes based on phone width to prevent overlapping
     double largeSize = maxWidth * 0.40;
     double mediumSize = maxWidth * 0.28;
 
@@ -331,7 +332,6 @@ class _DashboardTabState extends State<DashboardTab> {
     );
   }
 
-  // FIX: Removed the white glare layer, keeping only clean frosted glass
   Widget _buildCleanBubble({
     required String title, required double value, required String unit, 
     required IconData icon, required String status, required double size
@@ -583,45 +583,53 @@ class _WeatherSummaryCardState extends State<WeatherSummaryCard> {
   Widget build(BuildContext context) {
     String formattedDate = DateFormat('MMM d, yyyy').format(DateTime.now());
     
-    return ClipRRect(
-      borderRadius: BorderRadius.circular(16),
-      child: BackdropFilter(
-        filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
-        child: Container(
-          width: double.infinity, padding: const EdgeInsets.all(16),
-          decoration: BoxDecoration(
-            color: Colors.black.withOpacity(0.5), 
-            borderRadius: BorderRadius.circular(16), 
-            border: Border.all(color: Colors.white.withOpacity(0.2)),
+    return GestureDetector(
+      onTap: () {
+        Navigator.push(
+          context,
+          MaterialPageRoute(builder: (context) => const EnvironmentalDataTab()),
+        );
+      },
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(16),
+        child: BackdropFilter(
+          filter: ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+          child: Container(
+            width: double.infinity, padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: Colors.black.withOpacity(0.5), 
+              borderRadius: BorderRadius.circular(16), 
+              border: Border.all(color: Colors.white.withOpacity(0.2)),
+            ),
+            child: _isLoading ? const Center(child: Padding(padding: EdgeInsets.all(4.0), child: CircularProgressIndicator(color: Colors.white)))
+                : _hasError ? const Text("Weather data unavailable.", style: TextStyle(color: Colors.white70))
+                : Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween, 
+                    children: [
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start, 
+                        children: [
+                          const Text("Naic, Cavite", style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900, color: Colors.white)), 
+                          const SizedBox(height: 2), 
+                          Text(formattedDate, style: const TextStyle(fontSize: 13, color: Colors.white70, fontWeight: FontWeight.bold))
+                        ]
+                      ),
+                      Row(
+                        children: [
+                          const Icon(Icons.cloud, color: Colors.white, size: 32), 
+                          const SizedBox(width: 10), 
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start, 
+                            children: [
+                              Text(_temp, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: Colors.white)), 
+                              Text(_desc, style: const TextStyle(fontSize: 12, color: Colors.white70, fontWeight: FontWeight.bold))
+                            ]
+                          )
+                        ]
+                      )
+                    ]
+                  ),
           ),
-          child: _isLoading ? const Center(child: Padding(padding: EdgeInsets.all(4.0), child: CircularProgressIndicator(color: Colors.white)))
-              : _hasError ? const Text("Weather data unavailable.", style: TextStyle(color: Colors.white70))
-              : Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween, 
-                  children: [
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start, 
-                      children: [
-                        const Text("Naic, Cavite", style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900, color: Colors.white)), 
-                        const SizedBox(height: 2), 
-                        Text(formattedDate, style: const TextStyle(fontSize: 13, color: Colors.white70, fontWeight: FontWeight.bold))
-                      ]
-                    ),
-                    Row(
-                      children: [
-                        const Icon(Icons.cloud, color: Colors.white, size: 32), 
-                        const SizedBox(width: 10), 
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start, 
-                          children: [
-                            Text(_temp, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: Colors.white)), 
-                            Text(_desc, style: const TextStyle(fontSize: 12, color: Colors.white70, fontWeight: FontWeight.bold))
-                          ]
-                        )
-                      ]
-                    )
-                  ]
-                ),
         ),
       ),
     );

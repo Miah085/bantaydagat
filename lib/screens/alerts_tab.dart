@@ -119,7 +119,7 @@ class _AlertsTabState extends State<AlertsTab> {
       double turb = _parseDouble(log['turbidity']);
 
       void checkThreshold(String name, String brainKey, double val, String unit) {
-        String currentState = SensorConstants.getStatus(val, brainKey);
+        String currentState = SensorConstants.getStatus(brainKey, val);
         String prevState = lastKnownState[brainKey]!;
 
         if (currentState != prevState) {

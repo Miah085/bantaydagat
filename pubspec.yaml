@@ -73,6 +73,12 @@ flutter:
   assets:
     - assets/images/bantay-dagat.png
     - assets/images/bg.jpg
+    - assets/images/bg_safe.jpg
+    - assets/images/bg_danger.png
+    - assets/images/bg_caution.png
+    - assets/images/turtle_safe.png
+    - assets/images/turtle_danger.png
+    - assets/images/turtle_caution.png
   #   - images/a_dot_burr.jpeg
   #   - images/a_dot_ham.jpeg
 

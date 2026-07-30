@@ -3,66 +3,47 @@ import 'package:firebase_database/firebase_database.dart';
 import 'package:firebase_core/firebase_core.dart';
 import 'package:intl/intl.dart';
 import 'dart:async';
-import 'package:fl_chart/fl_chart.dart';
 
-class HistoricalTrendsTab extends StatefulWidget {
-  const HistoricalTrendsTab({super.key});
+import '../config/sensor_constants.dart';
+
+class TrendsTab extends StatefulWidget {
+  const TrendsTab({super.key});
 
   @override
-  State<HistoricalTrendsTab> createState() => _HistoricalTrendsTabState();
+  State<TrendsTab> createState() => _TrendsTabState();
 }
 
-class _HistoricalTrendsTabState extends State<HistoricalTrendsTab> {
+class _TrendsTabState extends State<TrendsTab> {
   bool _isLoading = true;
-  List<Map<String, dynamic>> _logs = [];
+  List<Map<String, dynamic>> _readings = [];
+  
   final String databaseUrl = "https://bantaydagat-default-rtdb.firebaseio.com/";
-  
-  StreamSubscription<DatabaseEvent>? _trendsSubscription;
-  
-  // UI State Matching the Web Dashboard
-  String _selectedTimeFilter = '24h'; // Default to 24 hours
-  String _selectedParameter = 'waterTemp'; // Default parameter
-
-  // Parameter Configuration Map
-  final Map<String, Map<String, dynamic>> _paramConfig = {
-    'waterTemp': {'name': 'Water Temperature', 'unit': '°C', 'color': const Color(0xFF0EA5E9)},
-    'airTemp': {'name': 'Air Temperature', 'unit': '°C', 'color': const Color(0xFFF59E0B)},
-    'humidity': {'name': 'Humidity', 'unit': '%', 'color': const Color(0xFF8B5CF6)},
-    'ph': {'name': 'pH Level', 'unit': 'pH', 'color': const Color(0xFF10B981)},
-    'turbidity': {'name': 'Turbidity', 'unit': 'NTU', 'color': const Color(0xFF6366F1)},
-  };
+  StreamSubscription<DatabaseEvent>? _historySubscription;
 
   @override
   void initState() {
     super.initState();
-    _setupRealtimeHistory();
+    _fetchData();
   }
 
   @override
   void dispose() {
-    _trendsSubscription?.cancel();
+    _historySubscription?.cancel();
     super.dispose();
   }
 
-  void _setupRealtimeHistory() {
-    _trendsSubscription?.cancel();
+  void _fetchData() {
     setState(() => _isLoading = true);
-
     final db = FirebaseDatabase.instanceFor(app: Firebase.app(), databaseURL: databaseUrl);
     
-    int limit = _selectedTimeFilter == '24h' ? 300 : 2050; 
-    
-    _trendsSubscription = db.ref('bantaydagat/readings').limitToLast(limit).onValue.listen((event) {
+    // Pull enough readings to cover the last 7 days (approx 2000 readings if logging every 5 mins)
+    _historySubscription = db.ref('bantaydagat/readings').limitToLast(2500).onValue.listen((event) {
       if (event.snapshot.value != null && mounted) {
         final Map rawData = event.snapshot.value as Map;
         List<Map<String, dynamic>> updatedLogs = rawData.entries.map((e) => Map<String, dynamic>.from(e.value as Map)).toList();
         
-        DateTime now = DateTime.now();
-        DateTime cutoff = _selectedTimeFilter == '24h' 
-            ? now.subtract(const Duration(hours: 24))
-            : now.subtract(const Duration(days: 7));
+        DateTime cutoff = DateTime.now().subtract(const Duration(days: 7));
 
-        // Filter out records older than the 24h/7d window
         updatedLogs = updatedLogs.where((log) {
           int ts = int.tryParse(log['timestamp']?.toString() ?? '0') ?? 0;
           if (ts > 0 && ts < 10000000000) ts *= 1000;
@@ -70,333 +51,205 @@ class _HistoricalTrendsTabState extends State<HistoricalTrendsTab> {
           return date.isAfter(cutoff);
         }).toList();
 
-        // Sort chronologically (oldest first) so the graph plots correctly from left to right
-        updatedLogs.sort((a, b) {
-          int tsA = int.tryParse(a['timestamp']?.toString() ?? '0') ?? 0;
-          int tsB = int.tryParse(b['timestamp']?.toString() ?? '0') ?? 0;
-          return tsA.compareTo(tsB); 
-        });
-
         setState(() {
-          _logs = updatedLogs;
+          _readings = updatedLogs;
           _isLoading = false;
         });
       } else {
-         setState(() {
-          _logs = [];
+        setState(() {
+          _readings = [];
           _isLoading = false;
         });
       }
     });
   }
 
-  double _getParamValue(Map<String, dynamic> log, String param) {
-    dynamic val;
-    switch(param) {
-      case 'waterTemp': val = log['temperature'] ?? log['waterTemp']; break;
-      case 'airTemp': val = log['air_temperature'] ?? log['airTemp']; break;
-      case 'humidity': val = log['humidity']; break;
-      case 'ph': val = log['ph'] ?? log['pH']; break;
-      case 'turbidity': val = log['turbidity']; break;
+  double _parseDouble(dynamic value) {
+    if (value == null) return 0.0;
+    if (value is double) return value;
+    if (value is int) return value.toDouble();
+    return double.tryParse(value.toString()) ?? 0.0;
+  }
+
+  // === WHITEBOARD CALENDAR LOGIC ===
+  // Groups raw readings into 7 discrete days and assigns a single color/status to each day
+  List<Map<String, dynamic>> _generateDailySummary() {
+    // 1. Initialize the last 7 days in order (Today first, going backwards)
+    List<Map<String, dynamic>> daysList = [];
+    DateTime now = DateTime.now();
+    
+    for (int i = 0; i < 7; i++) {
+      DateTime targetDay = now.subtract(Duration(days: i));
+      String dateString = DateFormat('EEEE, MMM d').format(targetDay);
+      
+      daysList.add({
+        'dateLabel': i == 0 ? 'TODAY' : (i == 1 ? 'YESTERDAY' : dateString.toUpperCase()),
+        'dateString': dateString,
+        'targetDay': targetDay,
+        'readingsCount': 0,
+        'hasDanger': false,
+        'hasCaution': false,
+      });
     }
-    if (val == null) return 0.0;
-    if (val is double) return val;
-    if (val is int) return val.toDouble();
-    return double.tryParse(val.toString()) ?? 0.0;
+
+    // 2. Sort readings into their respective days
+    for (var log in _readings) {
+      int ts = int.tryParse(log['timestamp']?.toString() ?? '0') ?? 0;
+      if (ts > 0 && ts < 10000000000) ts *= 1000;
+      DateTime logDate = DateTime.fromMillisecondsSinceEpoch(ts);
+      String logDateString = DateFormat('EEEE, MMM d').format(logDate);
+
+      // Find matching day in our list
+      for (var day in daysList) {
+        if (day['dateString'] == logDateString) {
+          day['readingsCount'] = (day['readingsCount'] as int) + 1;
+          
+          double air = _parseDouble(log['air_temperature'] ?? log['airTemp']);
+          double water = _parseDouble(log['temperature'] ?? log['waterTemp']);
+          double hum = _parseDouble(log['humidity']);
+          double ph = _parseDouble(log['ph'] ?? log['pH'] ?? 7.8);
+          double turb = _parseDouble(log['turbidity']);
+
+          String airStat = SensorConstants.getStatus('airTemp', air);
+          String waterStat = SensorConstants.getStatus('waterTemp', water);
+          String humStat = SensorConstants.getStatus('humidity', hum);
+          String phStat = SensorConstants.getStatus('ph', ph);
+          String turbStat = SensorConstants.getStatus('turbidity', turb);
+
+          Map<String, dynamic> assessment = SensorConstants.calculateOverallReleaseStatus([
+            airStat, waterStat, humStat, phStat, turbStat
+          ]);
+
+          if (assessment['status'].toString().contains('DANGER') || assessment['status'].toString().contains('NO-GO')) {
+            day['hasDanger'] = true;
+          } else if (assessment['status'].toString().contains('CAUTION')) {
+            day['hasCaution'] = true;
+          }
+          break; // Found the day, move to next log
+        }
+      }
+    }
+
+    // 3. Assign final traffic-light status per day
+    for (var day in daysList) {
+      if (day['readingsCount'] == 0) {
+        day['statusText'] = 'NO DATA';
+        day['color'] = Colors.grey.shade400;
+        day['icon'] = Icons.help_outline;
+      } else if (day['hasDanger'] == true) {
+        day['statusText'] = 'DANGER: NO RELEASE';
+        day['color'] = const Color(0xFFEF4444); // Solid Red
+        day['icon'] = Icons.block;
+      } else if (day['hasCaution'] == true) {
+        day['statusText'] = 'CAUTION';
+        day['color'] = const Color(0xFFF59E0B); // Solid Yellow/Amber
+        day['icon'] = Icons.warning_amber_rounded;
+      } else {
+        day['statusText'] = 'SAFE TO RELEASE';
+        day['color'] = const Color(0xFF10B981); // Solid Green
+        day['icon'] = Icons.check_circle;
+      }
+    }
+
+    return daysList;
   }
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      color: const Color(0xFFF8FAFC),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _buildHeaderAndFilters(),
-          
-          if (_isLoading)
-            const Expanded(child: Center(child: CircularProgressIndicator(color: Color(0xFF0F82A0))))
-          else if (_logs.isEmpty)
-            Expanded(
-              child: Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Icon(Icons.monitor_heart_outlined, size: 48, color: Colors.blueGrey.shade200),
-                    const SizedBox(height: 16),
-                    Text(
-                      "No data recorded in the last ${_selectedTimeFilter == '24h' ? '24 hours' : '7 days'}.", 
-                      style: const TextStyle(color: Colors.grey)
-                    ),
-                  ],
-                ),
-              )
-            )
-          else
-            Expanded(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(16.0),
-                child: Column(
-                  children: [
-                    _buildChartCard(),
-                    const SizedBox(height: 24),
-                    _buildStatsSummary(),
-                    const SizedBox(height: 40),
-                  ],
-                ),
-              ),
-            ),
-        ],
-      ),
-    );
-  }
+    if (_isLoading) {
+      return const Center(child: CircularProgressIndicator(color: Color(0xFF0F82A0)));
+    }
 
-  Widget _buildHeaderAndFilters() {
+    List<Map<String, dynamic>> dailySummary = _generateDailySummary();
+
     return Container(
-      padding: const EdgeInsets.fromLTRB(16, 24, 16, 16),
-      color: Colors.white,
+      color: const Color(0xFFF1F5F9), // Slightly darker background for contrast
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text("Historical Trends", style: TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: Color(0xFF0F172A))),
-              Row(
-                children: [
-                  _buildTimeChip('24 Hours', '24h'),
-                  const SizedBox(width: 8),
-                  _buildTimeChip('7 Days', '7d'),
-                ],
-              )
-            ],
-          ),
-          const SizedBox(height: 16),
-          // Parameter Dropdown exactly like the web
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
-            decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: Colors.grey.shade300),
-            ),
-            child: DropdownButtonHideUnderline(
-              child: DropdownButton<String>(
-                value: _selectedParameter,
-                isExpanded: true,
-                icon: const Icon(Icons.keyboard_arrow_down, color: Color(0xFF64748B)),
-                style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600, color: Color(0xFF0F172A)),
-                onChanged: (String? newValue) {
-                  if (newValue != null) {
-                    setState(() => _selectedParameter = newValue);
-                  }
-                },
-                items: _paramConfig.keys.map<DropdownMenuItem<String>>((String key) {
-                  return DropdownMenuItem<String>(
-                    value: key,
-                    child: Row(
-                      children: [
-                        Icon(Icons.circle, size: 10, color: _paramConfig[key]!['color']),
-                        const SizedBox(width: 12),
-                        Text(_paramConfig[key]!['name']),
-                      ],
-                    ),
-                  );
-                }).toList(),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildTimeChip(String label, String value) {
-    bool isSelected = _selectedTimeFilter == value;
-    return InkWell(
-      onTap: () {
-        if (!isSelected) {
-          setState(() => _selectedTimeFilter = value);
-          _setupRealtimeHistory(); 
-        }
-      },
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        decoration: BoxDecoration(
-          color: isSelected ? const Color(0xFF0F82A0) : Colors.grey.shade100,
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: isSelected ? const Color(0xFF0F82A0) : Colors.grey.shade300),
-        ),
-        child: Text(
-          label,
-          style: TextStyle(
-            fontSize: 12,
-            fontWeight: isSelected ? FontWeight.bold : FontWeight.w500,
-            color: isSelected ? Colors.white : Colors.grey.shade600,
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildChartCard() {
-    List<FlSpot> spots = [];
-    double minY = double.infinity;
-    double maxY = double.negativeInfinity;
-    
-    Color lineColor = _paramConfig[_selectedParameter]!['color'];
-    String unit = _paramConfig[_selectedParameter]!['unit'];
-
-    for (int i = 0; i < _logs.length; i++) {
-      double val = _getParamValue(_logs[i], _selectedParameter);
-      spots.add(FlSpot(i.toDouble(), val));
-      if (val < minY) minY = val;
-      if (val > maxY) maxY = val;
-    }
-
-    // Add padding to Y-axis so graph doesn't hit the ceiling/floor
-    if (minY == double.infinity) { minY = 0; maxY = 10; }
-    double yPadding = (maxY - minY) * 0.2;
-    if (yPadding == 0) yPadding = 1;
-
-    return Container(
-      width: double.infinity,
-      height: 350,
-      padding: const EdgeInsets.only(top: 24, right: 24, left: 8, bottom: 16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: Colors.grey.shade200),
-      ),
-      child: LineChart(
-        LineChartData(
-          minY: minY - yPadding,
-          maxY: maxY + yPadding,
-          gridData: FlGridData(
-            show: true,
-            drawVerticalLine: false,
-            horizontalInterval: yPadding > 0 ? yPadding : 1,
-            getDrawingHorizontalLine: (value) => FlLine(color: Colors.grey.shade100, strokeWidth: 1),
-          ),
-          titlesData: FlTitlesData(
-            rightTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-            topTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)),
-            bottomTitles: const AxisTitles(sideTitles: SideTitles(showTitles: false)), 
-            leftTitles: AxisTitles(
-              sideTitles: SideTitles(
-                showTitles: true,
-                reservedSize: 45,
-                getTitlesWidget: (value, meta) {
-                  // Only show specific labels to avoid crowding
-                  return Center(
-                    child: Text(
-                      '${value.toStringAsFixed(1)}$unit', 
-                      style: const TextStyle(color: Color(0xFF94A3B8), fontSize: 10)
-                    ),
-                  );
-                },
-              ),
-            ),
-          ),
-          borderData: FlBorderData(show: false),
-          lineBarsData: [
-            LineChartBarData(
-              spots: spots,
-              isCurved: true,
-              color: lineColor,
-              barWidth: 3,
-              isStrokeCapRound: true,
-              dotData: const FlDotData(show: false),
-              belowBarData: BarAreaData(
-                show: true,
-                color: lineColor.withOpacity(0.1),
-              ),
-            ),
-          ],
-          lineTouchData: LineTouchData(
-            touchTooltipData: LineTouchTooltipData(
-              getTooltipItems: (touchedSpots) {
-                return touchedSpots.map((LineBarSpot touchedSpot) {
-                  final textStyle = TextStyle(color: lineColor, fontWeight: FontWeight.bold, fontSize: 14);
-                  
-                  int index = touchedSpot.x.toInt();
-                  String timeStr = "";
-                  if (index >= 0 && index < _logs.length) {
-                    int ts = int.tryParse(_logs[index]['timestamp']?.toString() ?? '0') ?? 0;
-                    if (ts > 0 && ts < 10000000000) ts *= 1000;
-                    timeStr = DateFormat('MMM d, h:mm a').format(DateTime.fromMillisecondsSinceEpoch(ts));
-                  }
-                  
-                  return LineTooltipItem('${touchedSpot.y.toStringAsFixed(2)}$unit\n', textStyle, children: [
-                    TextSpan(text: timeStr, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.normal, color: Colors.white70))
-                  ]);
-                }).toList();
-              },
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildStatsSummary() {
-    double minVal = double.infinity, maxVal = double.negativeInfinity, sum = 0;
-    
-    for (var log in _logs) {
-      double val = _getParamValue(log, _selectedParameter);
-      if (val < minVal) minVal = val;
-      if (val > maxVal) maxVal = val;
-      sum += val;
-    }
-    
-    double avgVal = _logs.isEmpty ? 0 : (sum / _logs.length);
-    if (minVal == double.infinity) minVal = 0;
-    if (maxVal == double.negativeInfinity) maxVal = 0;
-
-    String paramName = _paramConfig[_selectedParameter]!['name'];
-    String unit = _paramConfig[_selectedParameter]!['unit'];
-
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Text("$paramName Summary", style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: Color(0xFF0F172A))),
-        const SizedBox(height: 12),
-        Row(
-          children: [
-            Expanded(child: _buildSummaryBox("Minimum", minVal, unit, const Color(0xFF0F82A0))),
-            const SizedBox(width: 12),
-            Expanded(child: _buildSummaryBox("Average", avgVal, unit, const Color(0xFFF59E0B))),
-            const SizedBox(width: 12),
-            Expanded(child: _buildSummaryBox("Maximum", maxVal, unit, const Color(0xFFEF4444))),
-          ],
-        )
-      ],
-    );
-  }
-
-  Widget _buildSummaryBox(String label, double value, String unit, Color color) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.white, 
-        borderRadius: BorderRadius.circular(12), 
-        border: Border.all(color: Colors.grey.shade200)
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Text(label, style: const TextStyle(fontSize: 11, color: Color(0xFF64748B), fontWeight: FontWeight.w600)),
-          const SizedBox(height: 8),
-          FittedBox(
-            fit: BoxFit.scaleDown,
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.baseline,
-              textBaseline: TextBaseline.alphabetic,
+            width: double.infinity,
+            padding: const EdgeInsets.fromLTRB(20, 40, 20, 24),
+            color: Colors.white,
+            child: const Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text(value.toStringAsFixed(1), style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: color)),
-                const SizedBox(width: 2),
-                Text(unit, style: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8), fontWeight: FontWeight.w500)),
+                Text("7-Day Water Safety", style: TextStyle(fontSize: 28, fontWeight: FontWeight.w900, color: Color(0xFF0F172A))),
+                SizedBox(height: 8),
+                Text("Quick history of water conditions for releases.", style: TextStyle(fontSize: 16, color: Color(0xFF64748B))),
               ],
+            ),
+          ),
+          
+          Expanded(
+            child: ListView.builder(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 20),
+              itemCount: dailySummary.length,
+              itemBuilder: (context, index) {
+                final day = dailySummary[index];
+                bool isToday = index == 0;
+
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 16),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(16),
+                    border: Border.all(
+                      color: isToday ? day['color'] : Colors.grey.shade200, 
+                      width: isToday ? 2 : 1
+                    ),
+                    boxShadow: [
+                      BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 8, offset: const Offset(0, 4))
+                    ]
+                  ),
+                  child: Row(
+                    children: [
+                      // Massive Color Indicator Block on the left
+                      Container(
+                        width: 100,
+                        height: 100,
+                        decoration: BoxDecoration(
+                          color: (day['color'] as Color).withOpacity(0.15),
+                          borderRadius: const BorderRadius.only(topLeft: Radius.circular(15), bottomLeft: Radius.circular(15))
+                        ),
+                        child: Center(
+                          child: Icon(day['icon'], color: day['color'], size: 48),
+                        ),
+                      ),
+                      
+                      const SizedBox(width: 20),
+                      
+                      // Simple text information
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Text(
+                              day['dateLabel'], 
+                              style: TextStyle(
+                                fontSize: isToday ? 18 : 14, 
+                                fontWeight: FontWeight.w900, 
+                                color: isToday ? const Color(0xFF0F172A) : const Color(0xFF64748B),
+                                letterSpacing: 1
+                              )
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              day['statusText'], 
+                              style: TextStyle(
+                                fontSize: 18, 
+                                fontWeight: FontWeight.w900, 
+                                color: day['color']
+                              )
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                );
+              },
             ),
           ),
         ],

@@ -1,76 +1,112 @@
-import 'package:bantaydagat/screens/login_screen.dart';
 import 'package:flutter/material.dart';
-import 'package:firebase_core/firebase_core.dart'; 
+import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
-import 'package:flutter_local_notifications/flutter_local_notifications.dart'; // --- NEW IMPORT ---
-import 'firebase_options.dart'; 
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
-// --- NEW: Global instance for local notifications ---
-final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
+import 'firebase_options.dart';
+import 'package:bantaydagat/screens/login_screen.dart';
 
-// --- BACKGROUND NOTIFICATION LISTENER ---
-// Must be a top-level function outside of any class
+final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+    FlutterLocalNotificationsPlugin();
+
+/// Background messages
 Future<void> _firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
-  debugPrint("🚨 DANGER ALERT RECEIVED IN BACKGROUND: ${message.messageId}");
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
 }
 
-void main() async {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  
-  if (Firebase.apps.isEmpty) {
-    await Firebase.initializeApp(
-      options: DefaultFirebaseOptions.currentPlatform,
-    );
-  }
 
-  // --- NEW: Create the High-Priority Android Channel for Sound ---
-  const AndroidNotificationChannel channel = AndroidNotificationChannel(
-    'emergency_alerts_channel', // This MUST match the channelId in your index.js payload
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
+
+  FirebaseMessaging.onBackgroundMessage(
+      _firebaseMessagingBackgroundHandler);
+
+  // Android notification channel
+  const AndroidNotificationChannel channel =
+      AndroidNotificationChannel(
+    'emergency_alerts_channel',
     'Emergency Alerts',
-    description: 'Critical water quality warnings.',
-    importance: Importance.max, // This forces the phone to play a sound and show a heads-up pop-up
-    playSound: true,
+    description: 'Critical BantayDagat notifications',
+    importance: Importance.max,
   );
 
   await flutterLocalNotificationsPlugin
-      .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
+      .resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>()
       ?.createNotificationChannel(channel);
-  // --- END NEW ---
 
-  // --- Register the background listener ---
-  FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
-  
-  // --- NEW: Request permissions & subscribe to the cloud function's topic ---
+  const InitializationSettings initializationSettings =
+      InitializationSettings(
+    android: AndroidInitializationSettings('@mipmap/ic_launcher'),
+  );
+
+  await flutterLocalNotificationsPlugin.initialize(
+    initializationSettings,
+  );
+
   await _initializeCloudMessaging();
+
+  FirebaseMessaging.onMessage.listen((RemoteMessage message) async {
+    print("========== FOREGROUND MESSAGE ==========");
+    print(message.notification?.title);
+    print(message.notification?.body);
+
+    if (message.notification != null) {
+      await flutterLocalNotificationsPlugin.show(
+        message.hashCode,
+        message.notification!.title,
+        message.notification!.body,
+        const NotificationDetails(
+          android: AndroidNotificationDetails(
+            'emergency_alerts_channel',
+            'Emergency Alerts',
+            channelDescription: 'Critical BantayDagat notifications',
+            importance: Importance.max,
+            priority: Priority.high,
+            icon: '@mipmap/ic_launcher',
+          ),
+        ),
+      );
+    }
+  });
+
+  FirebaseMessaging.onMessageOpenedApp.listen((message) {
+    print("Notification tapped");
+  });
+
+  final initialMessage =
+      await FirebaseMessaging.instance.getInitialMessage();
+
+  if (initialMessage != null) {
+    print("Opened from terminated notification");
+  }
 
   runApp(const MyApp());
 }
 
-// Helper function to handle push notification permissions and topic subscription
 Future<void> _initializeCloudMessaging() async {
-  try {
-    FirebaseMessaging messaging = FirebaseMessaging.instance;
+  FirebaseMessaging messaging = FirebaseMessaging.instance;
 
-    // Request user permission for notifications (essential for Android 13+ and iOS)
-    NotificationSettings settings = await messaging.requestPermission(
-      alert: true,
-      badge: true,
-      sound: true,
-    );
+  await messaging.requestPermission(
+    alert: true,
+    badge: true,
+    sound: true,
+  );
 
-    if (settings.authorizationStatus == AuthorizationStatus.authorized) {
-      debugPrint('User granted notification permissions.');
-      
-      // CRITICAL: Links this device to the Cloud Function's notification topic
-      await messaging.subscribeToTopic('emergency_alerts');
-      debugPrint('Successfully subscribed to "emergency_alerts" topic.');
-    } else {
-      debugPrint('User declined or skipped notification permissions.');
-    }
-  } catch (e) {
-    debugPrint('Error initializing Firebase Cloud Messaging: $e');
-  }
+  String? token = await messaging.getToken();
+
+  print("========== FCM TOKEN ==========");
+  print(token);
+  print("===============================");
+
+  await messaging.subscribeToTopic("emergency_alerts");
+
+  print("Subscribed to emergency_alerts");
 }
 
 class MyApp extends StatelessWidget {
@@ -82,10 +118,10 @@ class MyApp extends StatelessWidget {
       debugShowCheckedModeBanner: false,
       title: 'BantayDagat',
       theme: ThemeData(
-        scaffoldBackgroundColor: const Color(0xFFF8FAFC),
-        fontFamily: 'Roboto', 
+        scaffoldBackgroundColor: Color(0xFFF8FAFC),
+        fontFamily: 'Roboto',
       ),
-      home: const LoginScreen(), 
+      home: const LoginScreen(),
     );
   }
 }

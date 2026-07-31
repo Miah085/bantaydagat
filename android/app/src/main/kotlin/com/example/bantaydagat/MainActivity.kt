@@ -1,4 +1,4 @@
-package com.example.bantaydagat
+package com.company.bantaydagat
 
 import io.flutter.embedding.android.FlutterActivity
 

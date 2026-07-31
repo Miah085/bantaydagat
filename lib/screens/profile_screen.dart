@@ -227,14 +227,19 @@ class _ProfileScreenState extends State<ProfileScreen> {
             borderRadius: BorderRadius.circular(20),
             border: Border.all(color: isNodeOnline ? const Color(0xFF10B981).withOpacity(0.5) : const Color(0xFFEF4444).withOpacity(0.5))
           ),
+          // --- RESPONSIVENESS FIX: Added Flexible to text so the badge scales down without overflowing ---
           child: Row(
             mainAxisSize: MainAxisSize.min,
+            mainAxisAlignment: MainAxisAlignment.center,
             children: [
               Icon(isNodeOnline ? Icons.sensors : Icons.sensors_off, size: 16, color: isNodeOnline ? const Color(0xFF10B981) : const Color(0xFFEF4444)),
               const SizedBox(width: 8),
-              Text(
-                isNodeOnline ? 'LINKED TO SENSOR NODE' : 'SENSOR NODE OFFLINE',
-                style: TextStyle(color: isNodeOnline ? const Color(0xFF10B981) : const Color(0xFFEF4444), fontSize: 11, fontWeight: FontWeight.w900, letterSpacing: 0.5),
+              Flexible(
+                child: Text(
+                  isNodeOnline ? 'LINKED TO SENSOR NODE' : 'SENSOR NODE OFFLINE',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: isNodeOnline ? const Color(0xFF10B981) : const Color(0xFFEF4444), fontSize: 11, fontWeight: FontWeight.w900, letterSpacing: 0.5),
+                ),
               ),
             ],
           ),

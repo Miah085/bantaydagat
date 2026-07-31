@@ -64,7 +64,6 @@ class _EnvironmentalDataTabState extends State<EnvironmentalDataTab> {
     return double.tryParse(value.toString()) ?? 0.0;
   }
 
-  // --- FETCH LIVE SENSOR DATA TO SYNC THE BACKGROUND ---
   void _setupRealtimeStream() {
     final db = FirebaseDatabase.instanceFor(app: Firebase.app(), databaseURL: databaseUrl);
     
@@ -113,7 +112,6 @@ class _EnvironmentalDataTabState extends State<EnvironmentalDataTab> {
     return const Color(0xFF94A3B8); 
   }
 
-  // --- FETCH WEATHER DATA ---
   Future<void> _fetchOpenMeteoData() async {
     if (!mounted) return;
     setState(() => _isWeatherLoading = true);
@@ -256,7 +254,6 @@ class _EnvironmentalDataTabState extends State<EnvironmentalDataTab> {
     String condition = _getWeatherCondition(_weatherCode);
     String windDir = _getWindDirection(_windDirDegrees);
     
-    // Banner based strictly on the API weather status
     bool isAtmosphereFavorable = _weatherCode < 61; 
     Color bannerColor = const Color(0xFF10B981); 
     String bannerTitle = "Atmosphere Favorable for Release";
@@ -276,7 +273,6 @@ class _EnvironmentalDataTabState extends State<EnvironmentalDataTab> {
       height: double.infinity,
       decoration: BoxDecoration(
         color: const Color(0xFF0F172A),
-        // THE FIX: Holds the dark background until BOTH weather and sensor data are ready
         image: isFullyLoading 
             ? null 
             : DecorationImage(
@@ -287,145 +283,156 @@ class _EnvironmentalDataTabState extends State<EnvironmentalDataTab> {
       ),
       child: isFullyLoading 
           ? const Center(child: CircularProgressIndicator(color: Colors.white))
-          : SingleChildScrollView(
-              padding: const EdgeInsets.fromLTRB(16.0, 120.0, 16.0, 120.0),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text("Eco Tracker", style: TextStyle(fontSize: 28, fontWeight: FontWeight.w900, color: Colors.white, shadows: [Shadow(color: Colors.black45, blurRadius: 6, offset: Offset(0, 2))])),
-                          const SizedBox(height: 4),
-                          Text("Macro-environmental tracking.", style: TextStyle(fontSize: 14, color: Colors.white70, shadows: const [Shadow(color: Colors.black45, blurRadius: 6)])),
-                        ],
-                      ),
-                      IconButton(
-                        onPressed: () {
-                          _fetchOpenMeteoData();
-                          _setupRealtimeStream();
-                        },
-                        icon: const Icon(Icons.refresh, color: Colors.white70),
-                        tooltip: "Refresh Weather",
-                      )
-                    ],
-                  ),
-                  const SizedBox(height: 24),
-
-                  _buildGlassCard(
-                    borderColor: bannerColor.withOpacity(0.6),
-                    borderWidth: 2.0,
-                    child: Padding(
-                      padding: const EdgeInsets.all(16.0),
-                      child: Row(
-                        children: [
-                          Icon(bannerIcon, color: bannerColor, size: 24),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: Text(bannerTitle, style: TextStyle(fontWeight: FontWeight.w900, color: bannerColor, fontSize: 14, letterSpacing: 0.3)),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 20),
-
-                  _buildGlassCard(
-                    child: Padding(
-                      padding: const EdgeInsets.all(24.0),
-                      child: Column(
-                        children: [
-                          const Text("Brgy. Labac, Naic, Cavite", style: TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.w800, letterSpacing: 0.8)),
-                          const SizedBox(height: 20),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            crossAxisAlignment: CrossAxisAlignment.center,
-                            children: [
-                              Icon(_getWeatherIcon(_weatherCode), color: Colors.white, size: 68),
-                              const SizedBox(width: 24),
-                              Column(
+          : SafeArea(
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  return SingleChildScrollView(
+                    padding: const EdgeInsets.fromLTRB(16.0, 20.0, 16.0, 120.0), 
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          crossAxisAlignment: CrossAxisAlignment.center,
+                          children: [
+                            const Expanded( 
+                              child: Column(
                                 crossAxisAlignment: CrossAxisAlignment.start,
                                 children: [
-                                  Text("${_currentTemp.toStringAsFixed(1)}°", style: const TextStyle(color: Colors.white, fontSize: 52, fontWeight: FontWeight.w900, height: 1.0, shadows: [Shadow(color: Colors.black54, blurRadius: 6)])),
-                                  const SizedBox(height: 2),
-                                  Text(condition, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700)),
-                                ],
-                              )
-                            ],
-                          ),
-                          const SizedBox(height: 24),
-                          Container(
-                            padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
-                            decoration: BoxDecoration(color: Colors.white.withOpacity(0.06), borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.white10)),
-                            child: Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceAround,
-                              children: [
-                                _buildHeroSubDetail(Icons.thermostat_outlined, "Feels Like", "${_feelsLike.toStringAsFixed(1)}°C"),
-                                _buildHeroSubDetail(Icons.water_drop_outlined, "Humidity", "$_humidity%"),
-                                _buildHeroSubDetail(Icons.air_outlined, "Wind Speed", "${_windSpeed.toStringAsFixed(1)} $windDir"),
-                              ],
-                            ),
-                          )
-                        ],
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 32),
-
-                  const Text("5-Day Forecast", style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: Colors.white, shadows: [Shadow(color: Colors.black54, blurRadius: 4)])),
-                  const SizedBox(height: 16),
-
-                  SizedBox(
-                    height: 175,
-                    child: ListView.builder(
-                      scrollDirection: Axis.horizontal,
-                      clipBehavior: Clip.none,
-                      itemCount: _forecastDates.length,
-                      itemBuilder: (context, index) {
-                        DateTime date = DateTime.parse(_forecastDates[index]);
-                        String dayName = index == 0 ? "Today" : DateFormat('EEE, MMM d').format(date);
-                        String fCond = _getWeatherCondition(_forecastCodes[index]);
-                        IconData fIcon = _getWeatherIcon(_forecastCodes[index]);
-
-                        return Container(
-                          width: 135,
-                          margin: const EdgeInsets.only(right: 14),
-                          child: _buildGlassCard(
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 16.0, horizontal: 12.0),
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Text(dayName, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: index == 0 ? const Color(0xFF3B82F6) : Colors.white70)),
-                                  const SizedBox(height: 12),
-                                  Icon(fIcon, color: Colors.white, size: 28),
-                                  const SizedBox(height: 12),
-                                  Row(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      Text("${_forecastMaxTemp[index].round()}°", style: const TextStyle(fontWeight: FontWeight.w900, color: Colors.white, fontSize: 16)),
-                                      const SizedBox(width: 8),
-                                      Text("${_forecastMinTemp[index].round()}°", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white.withOpacity(0.5), fontSize: 13)),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 6),
-                                  Text(fCond, textAlign: TextAlign.center, style: const TextStyle(fontSize: 11, color: Colors.white60, fontWeight: FontWeight.w600), maxLines: 1, overflow: TextOverflow.ellipsis),
+                                  Text("Eco Tracker", style: TextStyle(fontSize: 28, fontWeight: FontWeight.w900, color: Colors.white, shadows: [Shadow(color: Colors.black45, blurRadius: 6, offset: Offset(0, 2))])),
+                                  SizedBox(height: 4),
+                                  Text("Macro-environmental tracking.", style: TextStyle(fontSize: 14, color: Colors.white70, shadows: [Shadow(color: Colors.black45, blurRadius: 6)])),
                                 ],
                               ),
                             ),
+                            IconButton(
+                              onPressed: () {
+                                _fetchOpenMeteoData();
+                                _setupRealtimeStream();
+                              },
+                              icon: const Icon(Icons.refresh, color: Colors.white70),
+                              tooltip: "Refresh Weather",
+                            )
+                          ],
+                        ),
+                        const SizedBox(height: 24),
+
+                        _buildGlassCard(
+                          borderColor: bannerColor.withOpacity(0.6),
+                          borderWidth: 2.0,
+                          child: Padding(
+                            padding: const EdgeInsets.all(16.0),
+                            child: Row(
+                              children: [
+                                Icon(bannerIcon, color: bannerColor, size: 24),
+                                const SizedBox(width: 12),
+                                Expanded(
+                                  child: Text(bannerTitle, style: TextStyle(fontWeight: FontWeight.w900, color: bannerColor, fontSize: 14, letterSpacing: 0.3)),
+                                ),
+                              ],
+                            ),
                           ),
-                        );
-                      },
+                        ),
+                        const SizedBox(height: 20),
+
+                        // FIX: Added width double.infinity and cross-centering layout
+                        _buildGlassCard(
+                          child: Container(
+                            width: double.infinity,
+                            padding: const EdgeInsets.all(24.0),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.center,
+                              children: [
+                                const Text("Brgy. Labac, Naic, Cavite", style: TextStyle(color: Colors.white70, fontSize: 14, fontWeight: FontWeight.w800, letterSpacing: 0.8), textAlign: TextAlign.center),
+                                const SizedBox(height: 20),
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  crossAxisAlignment: CrossAxisAlignment.center,
+                                  children: [
+                                    Icon(_getWeatherIcon(_weatherCode), color: Colors.white, size: 68),
+                                    const SizedBox(width: 24),
+                                    Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text("${_currentTemp.toStringAsFixed(1)}°", style: const TextStyle(color: Colors.white, fontSize: 52, fontWeight: FontWeight.w900, height: 1.0, shadows: [Shadow(color: Colors.black54, blurRadius: 6)])),
+                                        const SizedBox(height: 2),
+                                        Text(condition, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w700)),
+                                      ],
+                                    )
+                                  ],
+                                ),
+                                const SizedBox(height: 24),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 16),
+                                  decoration: BoxDecoration(color: Colors.white.withOpacity(0.06), borderRadius: BorderRadius.circular(16), border: Border.all(color: Colors.white10)),
+                                  child: Row(
+                                    mainAxisAlignment: MainAxisAlignment.spaceAround,
+                                    children: [
+                                      _buildHeroSubDetail(Icons.thermostat_outlined, "Feels Like", "${_feelsLike.toStringAsFixed(1)}°C"),
+                                      _buildHeroSubDetail(Icons.water_drop_outlined, "Humidity", "$_humidity%"),
+                                      _buildHeroSubDetail(Icons.air_outlined, "Wind Speed", "${_windSpeed.toStringAsFixed(1)} $windDir"),
+                                    ],
+                                  ),
+                                )
+                              ],
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 32),
+
+                        const Text("5-Day Forecast", style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: Colors.white, shadows: [Shadow(color: Colors.black54, blurRadius: 4)])),
+                        const SizedBox(height: 16),
+
+                        SizedBox(
+                          height: 175,
+                          child: ListView.builder(
+                            scrollDirection: Axis.horizontal,
+                            clipBehavior: Clip.none,
+                            itemCount: _forecastDates.length,
+                            itemBuilder: (context, index) {
+                              DateTime date = DateTime.parse(_forecastDates[index]);
+                              String dayName = index == 0 ? "Today" : DateFormat('EEE, MMM d').format(date);
+                              String fCond = _getWeatherCondition(_forecastCodes[index]);
+                              IconData fIcon = _getWeatherIcon(_forecastCodes[index]);
+
+                              return Container(
+                                width: 135,
+                                margin: const EdgeInsets.only(right: 14),
+                                child: _buildGlassCard(
+                                  child: Padding(
+                                    padding: const EdgeInsets.symmetric(vertical: 16.0, horizontal: 12.0),
+                                    child: Column(
+                                      mainAxisAlignment: MainAxisAlignment.center,
+                                      children: [
+                                        Text(dayName, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: index == 0 ? const Color(0xFF3B82F6) : Colors.white70)),
+                                        const SizedBox(height: 12),
+                                        Icon(fIcon, color: Colors.white, size: 28),
+                                        const SizedBox(height: 12),
+                                        Row(
+                                          mainAxisAlignment: MainAxisAlignment.center,
+                                          children: [
+                                            Text("${_forecastMaxTemp[index].round()}°", style: const TextStyle(fontWeight: FontWeight.w900, color: Colors.white, fontSize: 16)),
+                                            const SizedBox(width: 8),
+                                            Text("${_forecastMinTemp[index].round()}°", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.white.withOpacity(0.5), fontSize: 13)),
+                                          ],
+                                        ),
+                                        const SizedBox(height: 6),
+                                        Text(fCond, textAlign: TextAlign.center, style: const TextStyle(fontSize: 11, color: Colors.white60, fontWeight: FontWeight.w600), maxLines: 1, overflow: TextOverflow.ellipsis),
+                                      ],
+                                    ),
+                                  ),
+                                ),
+                              );
+                            },
+                          ),
+                        ),
+                        const SizedBox(height: 32),
+                        
+                        Center(child: Text("Source: Open-Meteo • Updated: $_lastUpdated", style: TextStyle(fontSize: 11, color: Colors.white.withOpacity(0.4), fontWeight: FontWeight.bold))),
+                      ],
                     ),
-                  ),
-                  const SizedBox(height: 32),
-                  
-                  Center(child: Text("Source: Open-Meteo • Updated: $_lastUpdated", style: TextStyle(fontSize: 11, color: Colors.white.withOpacity(0.4), fontWeight: FontWeight.bold))),
-                ],
+                  );
+                },
               ),
             ),
     );

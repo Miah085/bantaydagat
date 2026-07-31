@@ -20,7 +20,7 @@ class _TrendsTabState extends State<TrendsTab> {
   String _mainBgImagePath = 'assets/images/bg_safe.jpg';
 
   StreamSubscription<DatabaseEvent>? _historySubscription;
-  StreamSubscription<DatabaseEvent>? _liveSubscription; // ADDED: Live sync for background
+  StreamSubscription<DatabaseEvent>? _liveSubscription; 
   final String databaseUrl = "https://bantaydagat-default-rtdb.firebaseio.com/";
 
   @override
@@ -44,7 +44,6 @@ class _TrendsTabState extends State<TrendsTab> {
     return double.tryParse(value.toString()) ?? 0.0;
   }
 
-  // --- NEW: Syncs background perfectly with Dashboard ---
   void _setupRealtimeBackgroundSync() {
     final db = FirebaseDatabase.instanceFor(app: Firebase.app(), databaseURL: databaseUrl);
     _liveSubscription = db.ref('bantaydagat/latest').onValue.listen((event) {
@@ -196,14 +195,14 @@ class _TrendsTabState extends State<TrendsTab> {
   }
 
   Widget _buildHeader() {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 24.0),
+    return const Padding(
+      padding: EdgeInsets.only(bottom: 24.0),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Text("Weekly Trends", style: TextStyle(fontSize: 32, fontWeight: FontWeight.w900, color: Colors.white, shadows: [Shadow(color: Colors.black45, blurRadius: 6, offset: Offset(0, 2))])),
-          const SizedBox(height: 4),
-          Text("Quick history of water conditions for releases.", style: TextStyle(fontSize: 15, color: Colors.white70, shadows: const [Shadow(color: Colors.black45, blurRadius: 6)])),
+          Text("Weekly Trends", style: TextStyle(fontSize: 32, fontWeight: FontWeight.w900, color: Colors.white, shadows: [Shadow(color: Colors.black45, blurRadius: 6, offset: Offset(0, 2))])),
+          SizedBox(height: 4),
+          Text("Quick history of water conditions for releases.", style: TextStyle(fontSize: 15, color: Colors.white70, shadows: [Shadow(color: Colors.black45, blurRadius: 6)])),
         ],
       ),
     );
@@ -298,8 +297,10 @@ class _TrendsTabState extends State<TrendsTab> {
                               style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: statusColor, shadows: const [Shadow(color: Colors.black, blurRadius: 4)])
                             ),
                             const SizedBox(height: 12),
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            // --- RESPONSIVENESS FIX: Swapped Row for Wrap ---
+                            Wrap(
+                              spacing: 12,
+                              runSpacing: 8,
                               children: [
                                 _buildMiniSensor(Icons.thermostat, waterTemp, '°C', _getStrictStatusColor(waterStatus)),
                                 _buildMiniSensor(Icons.science, ph, 'pH', _getStrictStatusColor(phStatus)),
@@ -338,13 +339,16 @@ class _TrendsTabState extends State<TrendsTab> {
               children: [
                 Icon(Icons.help_outline, color: Colors.white.withOpacity(0.4), size: 36),
                 const SizedBox(width: 20),
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(dayHeader, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: Colors.white.withOpacity(0.6), letterSpacing: 1.0)),
-                    const SizedBox(height: 4),
-                    Text("NO DATA", style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: Colors.white.withOpacity(0.4))),
-                  ],
+                // --- RESPONSIVENESS FIX: Added Expanded ---
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(dayHeader, style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: Colors.white.withOpacity(0.6), letterSpacing: 1.0)),
+                      const SizedBox(height: 4),
+                      Text("NO DATA", style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: Colors.white.withOpacity(0.4))),
+                    ],
+                  ),
                 )
               ],
             ),
@@ -356,6 +360,7 @@ class _TrendsTabState extends State<TrendsTab> {
 
   Widget _buildMiniSensor(IconData icon, double value, String unit, Color statusColor) {
     return Row(
+      mainAxisSize: MainAxisSize.min,
       children: [
         Icon(icon, color: statusColor, size: 16),
         const SizedBox(width: 4),

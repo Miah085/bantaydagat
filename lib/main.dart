@@ -2,7 +2,11 @@ import 'package:bantaydagat/screens/login_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:firebase_core/firebase_core.dart'; 
 import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart'; // --- NEW IMPORT ---
 import 'firebase_options.dart'; 
+
+// --- NEW: Global instance for local notifications ---
+final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin = FlutterLocalNotificationsPlugin();
 
 // --- BACKGROUND NOTIFICATION LISTENER ---
 // Must be a top-level function outside of any class
@@ -19,6 +23,20 @@ void main() async {
       options: DefaultFirebaseOptions.currentPlatform,
     );
   }
+
+  // --- NEW: Create the High-Priority Android Channel for Sound ---
+  const AndroidNotificationChannel channel = AndroidNotificationChannel(
+    'emergency_alerts_channel', // This MUST match the channelId in your index.js payload
+    'Emergency Alerts',
+    description: 'Critical water quality warnings.',
+    importance: Importance.max, // This forces the phone to play a sound and show a heads-up pop-up
+    playSound: true,
+  );
+
+  await flutterLocalNotificationsPlugin
+      .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>()
+      ?.createNotificationChannel(channel);
+  // --- END NEW ---
 
   // --- Register the background listener ---
   FirebaseMessaging.onBackgroundMessage(_firebaseMessagingBackgroundHandler);
